@@ -10,6 +10,7 @@ A personal macOS desktop pet provides concise answers while the user browses, re
 
 - Build the first version for the user's own Mac.
 - Support local Ollama models and a ChatGPT account connection. The ChatGPT integration mechanism remains unresolved.
+- Switching between Ollama and ChatGPT starts a new chat. Existing chats remain associated with their original provider; switching does not transfer previous messages or attachments to the new provider.
 - Receive only context the user explicitly shares: questions, pasted text, or screenshots. Do not automatically observe the screen.
 - Open a typing interface by clicking the pet or using a global keyboard shortcut. Voice input is outside the first version.
 - Keep the pet at a user-chosen, draggable position above ordinary application windows, with subtle idle animation. It does not roam.
@@ -35,7 +36,7 @@ Generation brief: compare a slate-blue seated cat, a warm taupe owl, and a moss-
 
 - ChatGPT account eligibility, registration, authentication, model access, and usage limits. Official documentation describes [Sign in with ChatGPT](https://developers.openai.com/siwc) and [an app-server integration](https://developers.openai.com/siwc/token-sharing-open-source/codex-app-server); neither has been tested for this app.
 - Ollama discovery, available models, screenshot capability, and handling models that cannot accept images.
-- Provider selection and whether changing providers transfers previous conversation content.
+- Provider and model selection controls, including the initial default and handling unavailable models.
 - Response latency, streaming, cancellation, unavailable providers, and retry behavior.
 - Context limits, history storage, retention, and deletion details.
 - Capture permissions, attachment limits, and credential storage.
