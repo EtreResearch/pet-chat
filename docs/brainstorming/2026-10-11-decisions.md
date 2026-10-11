@@ -9,6 +9,7 @@ A personal macOS desktop pet provides concise answers while the user browses, re
 ## Confirmed choices
 
 - Build the first version for the user's own Mac.
+- Build a native macOS application using SwiftUI and AppKit. A Tauri web interface was considered and rejected for the first version.
 - Support local Ollama models and a ChatGPT account connection. The ChatGPT integration mechanism remains unresolved.
 - Switching between Ollama and ChatGPT starts a new chat. Existing chats remain associated with their original provider; switching does not transfer previous messages or attachments to the new provider.
 - Receive only context the user explicitly shares: questions, pasted text, or screenshots. Do not automatically observe the screen.
@@ -44,7 +45,7 @@ Generation brief: compare a slate-blue seated cat, a warm taupe owl, and a moss-
 - Capture permissions, attachment limits, and credential storage.
 - Keyboard shortcut, multiple displays, screen-edge placement, and detailed hiding behavior.
 - Actual pet and panel dimensions, accessibility, reduced motion, and animation states.
-- Native macOS approach, component boundaries, validation strategy, and implementation plan.
+- Component boundaries, validation strategy, and implementation plan.
 
 ## Existing notes
 
