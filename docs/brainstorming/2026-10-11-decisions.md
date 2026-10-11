@@ -17,9 +17,11 @@ A personal macOS desktop pet provides concise answers while the user browses, re
 - Keep replies visible until explicitly dismissed. Escape collapses the chat to the pet. Incoming replies do not steal keyboard focus.
 - Show a compact, scrollable conversation containing both questions and replies, initially scrolled to the newest message.
 - Give brief answers first, usually 1–3 sentences or a few short bullets. A “Tell me more” action continues with detail in the same chat.
+- Stream replies into the bubble as text arrives, with a subtle thinking animation and a Stop button.
 - Save conversations locally across app restarts and reopen the latest chat. Provide new-chat and deletion controls.
 - Use clear, neutral, concise language with minimal small talk.
 - In full-screen applications, hide the pet until summoned with the shortcut. Dismissing it hides both the pet and chat again. Native feasibility remains untested.
+- Offer opt-in launch at login during setup. Provide a menu-bar icon with Hide, Settings, and Quit.
 - Use layout A: a single compact panel above the pet, scrollable messages, and a fixed input at the bottom. Exact dimensions and edge behavior remain to be specified.
 - Include a “Capture area” action. The user selects a screen region, previews the attachment, adds a question, and presses Send. Capture alone does not send anything. Pasting text and screenshots is also supported.
 - Include one pet, with idle, thinking, and replying animations. Character A, the slate-blue seated cat, is selected from the concept board. Animation assets have not been created.
@@ -37,10 +39,10 @@ Generation brief: compare a slate-blue seated cat, a warm taupe owl, and a moss-
 - ChatGPT account eligibility, registration, authentication, model access, and usage limits. Official documentation describes [Sign in with ChatGPT](https://developers.openai.com/siwc) and [an app-server integration](https://developers.openai.com/siwc/token-sharing-open-source/codex-app-server); neither has been tested for this app.
 - Ollama discovery, available models, screenshot capability, and handling models that cannot accept images.
 - Provider and model selection controls, including the initial default and handling unavailable models.
-- Response latency, streaming, cancellation, unavailable providers, and retry behavior.
+- Response latency, cancellation details, unavailable providers, and retry behavior.
 - Context limits, history storage, retention, and deletion details.
 - Capture permissions, attachment limits, and credential storage.
-- Startup, hiding, quitting, menu-bar controls, keyboard shortcut, multiple displays, and screen-edge placement.
+- Keyboard shortcut, multiple displays, screen-edge placement, and detailed hiding behavior.
 - Actual pet and panel dimensions, accessibility, reduced motion, and animation states.
 - Native macOS approach, component boundaries, validation strategy, and implementation plan.
 
