@@ -35,6 +35,19 @@ The [character concept board](assets/pet-character-concepts.png) was generated w
 
 Generation brief: compare a slate-blue seated cat, a warm taupe owl, and a moss-green rounded creature, using calm expressions, simple dark outlines, enlarged and small views, and a warm off-white background.
 
+## Approved desktop behavior
+
+- Start with a roughly 64-point cat near the bottom-right corner, above the Dock. Persist its dragged position across restarts.
+- Place a 340-point-wide chat panel above the cat, growing to approximately 420 points tall before messages scroll. Reposition the panel at screen edges to keep it visible.
+- Clicking the cat or using the configurable default shortcut Control–Option–Space opens the chat and focuses the input.
+- Escape or Close collapses the chat and preserves an unsent draft. Clicking another app leaves the reply visible and allows that app to receive keyboard input.
+- Capture area temporarily hides the pet and panel. Restore the chat with an attachment preview after a successful region selection. Escape during selection cancels capture.
+- Use occasional idle blinks, a subtle thinking loop, and a brief completion reaction. Start without sounds. Honor Reduce Motion by disabling nonessential movement.
+- Show one pet on the chosen display. If that display disconnects, move it onto a remaining display. Apply the previously selected summon-only behavior in full-screen apps.
+- Keep the menu-bar icon available for Show/Hide, Settings, and Quit.
+
+These are approved starting values and intended behaviors, not measurements from a working app. Native focus, capture, full-screen, and multiple-display behavior require validation.
+
 ## Open design and feasibility work
 
 - ChatGPT account eligibility, registration, authentication, model access, and usage limits. Official documentation describes [Sign in with ChatGPT](https://developers.openai.com/siwc) and [an app-server integration](https://developers.openai.com/siwc/token-sharing-open-source/codex-app-server); neither has been tested for this app.
@@ -43,8 +56,8 @@ Generation brief: compare a slate-blue seated cat, a warm taupe owl, and a moss-
 - Response latency, cancellation details, unavailable providers, and retry behavior.
 - Context limits, history storage, retention, and deletion details.
 - Capture permissions, attachment limits, and credential storage.
-- Keyboard shortcut, multiple displays, screen-edge placement, and detailed hiding behavior.
-- Actual pet and panel dimensions, accessibility, reduced motion, and animation states.
+- Shortcut conflict handling, detailed screen-edge placement, and native validation of the approved desktop behavior.
+- Accessibility details and validation of pet/panel dimensions and animation states.
 - Component boundaries, validation strategy, and implementation plan.
 
 ## Existing notes
