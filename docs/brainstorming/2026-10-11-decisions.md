@@ -10,8 +10,8 @@ A personal macOS desktop pet provides concise answers while the user browses, re
 
 - Build the first version for the user's own Mac.
 - Build a native macOS application using SwiftUI and AppKit. A Tauri web interface was considered and rejected for the first version.
-- Support local Ollama models and a ChatGPT account connection. The ChatGPT integration mechanism remains unresolved.
-- Switching between Ollama and ChatGPT starts a new chat. Existing chats remain associated with their original provider; switching does not transfer previous messages or attachments to the new provider.
+- Support local Ollama models and a ChatGPT account connection through the documented direct Sign in with ChatGPT flow. Account access remains untested.
+- Each chat retains its provider and model. Switching either starts a new chat; switching does not transfer previous messages or attachments to the new provider or model.
 - Receive only context the user explicitly shares: questions, pasted text, or screenshots. Do not automatically observe the screen.
 - Open a typing interface by clicking the pet or using a global keyboard shortcut. Voice input is outside the first version.
 - Keep the pet at a user-chosen, draggable position above ordinary application windows, with subtle idle animation. It does not roam.
@@ -48,14 +48,25 @@ Generation brief: compare a slate-blue seated cat, a warm taupe owl, and a moss-
 
 These are approved starting values and intended behaviors, not measurements from a working app. Native focus, capture, full-screen, and multiple-display behavior require validation.
 
+## Approved AI connection and storage design
+
+- During setup, choose Ollama or Continue with ChatGPT, then select a model. Show the active provider and model in the chat header.
+- Connect Ollama to its local service and list installed models. Screenshot questions require an image-capable model. If the selected model cannot accept an image, preserve the draft and explain how to select a compatible model. See [Ollama vision support](https://docs.ollama.com/capabilities/vision).
+- Use the documented browser-based ChatGPT sign-in flow under the app's own identity. Store credentials in macOS Keychain and validate account access before showing the connection as ready. See [official registration and sign-in](https://developers.openai.com/siwc/token-sharing-open-source/sign-in).
+- Keep provider and model fixed for each conversation. Choosing another provider or model creates a new conversation.
+- Store messages and submitted screenshots locally. Deleting a chat removes its local messages and attachments.
+- Send the current question, its attachments, and recent exchanges within the model's context budget. Preserve older messages in readable history and indicate when they are outside the active context.
+- Separate the desktop interface, conversation storage, screen capture, and provider connections so they can be tested independently.
+
+This approves the intended integration and data flow; it does not establish that ChatGPT account access or image compatibility has been successfully tested.
+
 ## Open design and feasibility work
 
-- ChatGPT account eligibility, registration, authentication, model access, and usage limits. Official documentation describes [Sign in with ChatGPT](https://developers.openai.com/siwc) and [an app-server integration](https://developers.openai.com/siwc/token-sharing-open-source/codex-app-server); neither has been tested for this app.
-- Ollama discovery, available models, screenshot capability, and handling models that cannot accept images.
-- Provider and model selection controls, including the initial default and handling unavailable models.
+- Validate ChatGPT account eligibility, registration, authentication, model access, and usage limits against the documented direct flow.
+- Validate installed Ollama models, image capability detection, and provider/model selection controls.
 - Response latency, cancellation details, unavailable providers, and retry behavior.
-- Context limits, history storage, retention, and deletion details.
-- Capture permissions, attachment limits, and credential storage.
+- Exact context budgets, storage implementation, retention, and deletion details.
+- Capture permissions, attachment limits, and secure credential-storage implementation.
 - Shortcut conflict handling, detailed screen-edge placement, and native validation of the approved desktop behavior.
 - Accessibility details and validation of pet/panel dimensions and animation states.
 - Component boundaries, validation strategy, and implementation plan.
