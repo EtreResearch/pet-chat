@@ -60,15 +60,23 @@ These are approved starting values and intended behaviors, not measurements from
 
 This approves the intended integration and data flow; it does not establish that ChatGPT account access or image compatibility has been successfully tested.
 
+## Approved failure handling and validation
+
+- Keep provider errors inside the chat. Offer Retry or Reconnect as appropriate. Preserve the question and attachments, and never silently send to a different provider.
+- Allow one generating response per chat. Stop cancels the current request, when supported, and keeps its partial reply labelled “Stopped.” An interrupted response must not appear complete.
+- Request macOS screen capture permission when Capture area is used. If access is denied, explain how to enable it and keep text chat available.
+- Save messages as the conversation progresses. Surface storage errors rather than reporting an unsaved conversation as saved.
+- Test generation and cancellation, authentication failures, provider and model boundaries, screenshot compatibility, history restoration, and deletion with automated provider doubles and a temporary local store.
+- On the user's Mac, check keyboard focus, Escape, drag behavior, screen edges, full-screen apps, display disconnects, login launch, VoiceOver, and Reduce Motion.
+- Give immediate in-app feedback after Send. Measure time to first displayed text and completion for selected models; report observed speed without promising one universal latency. The idle pet makes no AI requests.
+
 ## Open design and feasibility work
 
 - Validate ChatGPT account eligibility, registration, authentication, model access, and usage limits against the documented direct flow.
 - Validate installed Ollama models, image capability detection, and provider/model selection controls.
-- Response latency, cancellation details, unavailable providers, and retry behavior.
-- Exact context budgets, storage implementation, retention, and deletion details.
-- Capture permissions, attachment limits, and secure credential-storage implementation.
-- Shortcut conflict handling, detailed screen-edge placement, and native validation of the approved desktop behavior.
-- Accessibility details and validation of pet/panel dimensions and animation states.
+- Exact model context budgets, retention details, and credential-store failure behavior.
+- Shortcut conflict handling, detailed screen-edge placement, and validation of approved native desktop behavior.
+- Accessibility and animation validation.
 - Component boundaries, validation strategy, and implementation plan.
 
 ## Existing notes
