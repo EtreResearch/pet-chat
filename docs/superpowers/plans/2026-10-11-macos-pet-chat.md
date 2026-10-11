@@ -1,0 +1,254 @@
+# macOS Pet Chat Implementation Plan
+
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+
+**Goal:** Build the approved personal macOS pet app for concise, streaming answers beside a draggable animated cat, using local Ollama or the user's eligible ChatGPT account.
+
+**Architecture:** Use a SwiftUI app with an AppKit-owned floating pet/chat surface and menu bar. Separate typed chat state, local SwiftData history and image files, ScreenCaptureKit region capture, and two streaming model providers. Store ChatGPT credentials in Keychain. Keep every chat tied to its original provider and model.
+
+**Tech Stack:** Swift 6, SwiftUI, AppKit, XCTest/Swift Testing as supported by the Xcode project, SwiftData, URLSession, ScreenCaptureKit, Security/Keychain, and the documented Sign in with ChatGPT direct OAuth flow. No third-party runtime or model SDK is planned.
+
+**Spec:** `docs/superpowers/specs/2026-10-11-macos-pet-chat-design.md`
+
+## Global Constraints
+
+- **Deployment floor proposal:** macOS 14.0 or later, to use ScreenCaptureKit single-frame capture; verify SDK availability and the oldest version worth supporting before establishing the project target.
+- Local-only conversation persistence in SwiftData plus app-owned Application Support image files; credentials in Keychain.
+- The app uses only the user's submitted prompt and explicitly attached text/images. Never read the screen in the background or make idle AI requests.
+- A chat stays with its provider and model. Changing either starts a new chat. Never silently fail over or move context to another provider/model.
+- Sign in with ChatGPT must use the documented flow under this app's identity and must meet its local/open-source eligibility requirements. Do not reuse Codex credentials or replace the flow with API keys/CLI without a new design review.
+- Use `stream: true` and `store: false` on the ChatGPT Responses path; supply each turn's needed input instead of HTTP previous-response continuation.
+- Keep the approved brief, neutral reply style, panel sizes, default shortcut, no-sound behavior, scope, and displayed copy from the spec.
+- Use Apple platform frameworks first. Add no package dependency unless a measured project requirement proves it necessary.
+
+## Review Focus
+
+- Invalid, truncated, or reordered Ollama NDJSON/OpenAI SSE must become a visible retryable error and never a completed answer. (Tasks 4–5.)
+- A missing model or text-only model receiving an image must preserve the user's draft and screenshot without submitting. (Tasks 4, 6.)
+- An OAuth callback with wrong state, nonce, PKCE verifier, identity, audience, expiry, or granted scope must never replace a valid account session or leak tokens into logs. (Task 5.)
+- Disk failure, interruption during generation, and deletion must not report unsaved history as saved or leave an attachment detached from its chat. (Tasks 3, 4.)
+- Permission denial, Retina coordinates, and display removal must not capture a wrong screen region or strand the pet. (Tasks 7–8.)
+
+---
+
+### Task 1: Create the native Mac app shell
+
+**Files:**
+- Create `PetChat.xcodeproj/project.pbxproj` with `PetChat`, `PetChatTests`, and `PetChatUITests` targets, app bundle configuration, and the proposed macOS 14.0 deployment target.
+- Create `PetChat/App/PetChatApp.swift`.
+- Create `PetChat/App/AppDelegate.swift`.
+- Create `PetChat/Views/PetView.swift`.
+- Create `PetChatUITests/AppLaunchTests.swift`.
+- Modify `CONTEXT.md` and `docs/adr/0001-chatgpt-via-codex-cli.md` to remove the superseded nonpersistent-thread and Codex-CLI-auth decisions; point project guidance to the approved spec and the still-unverified direct SIWC eligibility.
+
+**Interfaces:**
+- Produces the SwiftUI app entry point and a single accessory-app lifecycle.
+- `PetChatApp` owns the shared app delegate and root pet view. The root initially draws a static, accessible cat placeholder at the approved 64-point size.
+
+- [ ] **Step 1: Add the UI launch smoke test** — `testAppLaunchesWithPetVisible` uses `XCUIApplication` to launch the app and asserts the “Pet” accessibility element is present.
+- [ ] **Step 2: Run `xcodebuild test -project PetChat.xcodeproj -scheme PetChat -destination 'platform=macOS'` and confirm the new test fails because the target/app does not exist.**
+- [ ] **Step 3: Create the Xcode project and app shell** with Swift 6, `LSUIElement = YES`, an accessible static cat, and the minimum deployment target proposal above. Reconcile the two project notes in the Files list to match the spec. Do not add an external package.
+- [ ] **Step 4: Rerun the same `xcodebuild test` command and confirm the launch test passes.**
+- [ ] **Step 5: Commit** `feat: add native macOS pet app shell`.
+
+### Task 2: Define chats, provider boundaries, and request context
+
+**Files:**
+- Create `PetChat/Domain/ProviderID.swift`.
+- Create `PetChat/Domain/ChatThread.swift`.
+- Create `PetChat/Domain/ChatMessage.swift`.
+- Create `PetChat/Domain/ProviderModel.swift`.
+- Create `PetChat/Domain/GenerationRequest.swift`.
+- Create `PetChat/Providers/ChatProvider.swift`.
+- Create `PetChat/Conversation/ContextBuilder.swift`.
+- Test in `PetChatTests/Domain/ContextBuilderTests.swift` and `PetChatTests/Domain/ChatThreadTests.swift`.
+
+**Interfaces:**
+- `ProviderID`: Codable `ollama` and `chatGPT` cases.
+- `ProviderModel`: `id`, `displayName`, `supportsImages`, and optional `contextWindowTokens`.
+- `ChatThread`: `id`, `providerID`, `modelID`, `createdAt`, and ordered messages.
+- `ChatMessage`: `id`, role (`user`/`pet`), text, ordered attachment IDs, and status (`complete`/`stopped`/`failed`).
+- `GenerationRequest`: `id`, `modelID`, ordered prompt messages, and attached image bytes for the current user message only.
+- `ChatProvider`: `providerID`, `availableModels() async throws -> [ProviderModel]`, `stream(_:) -> AsyncThrowingStream<GenerationEvent, Error>`, and `cancel(_ requestID: UUID) async`.
+- `GenerationEvent`: `.textDelta(String)` and `.completed`.
+- `ContextBuilder.build(thread:currentText:currentAttachmentIDs:contextWindowTokens:) -> [PromptMessage]` returns oldest-to-newest whole message pairs under a conservative input-token estimate, reserves room for the answer, retains the newest exchange, and excludes all other chats.
+
+- [ ] **Step 1: Add failing domain/context tests** — cover a new chat having no inherited messages, provider/model being immutable for a chat, whole recent-pair retention, history exclusion, image IDs restricted to the current user message, and an oversized current message remaining intact.
+- [ ] **Step 2: Run `xcodebuild test -project PetChat.xcodeproj -scheme PetChat -destination 'platform=macOS'` and confirm the new tests fail.**
+- [ ] **Step 3: Implement the types and pure `ContextBuilder`**. Estimate tokens conservatively from text length; clamp to a known model window when present, otherwise use a conservative 8,000-token input budget. Never split or silently rewrite a user's message. Add a `shortcut:` comment to the estimator identifying its approximation and when provider-native tokenization should replace it.
+- [ ] **Step 4: Rerun the same test command and confirm the domain/context tests pass.**
+- [ ] **Step 5: Commit** `feat: add provider-bound chat domain`.
+
+### Task 3: Persist chats and screenshot attachments locally
+
+**Files:**
+- Create `PetChat/Persistence/ChatRecord.swift`.
+- Create `PetChat/Persistence/LocalChatStore.swift`.
+- Create `PetChat/Persistence/AttachmentStore.swift`.
+- Create `PetChatTests/Persistence/LocalChatStoreTests.swift`.
+- Create `PetChatTests/Persistence/AttachmentStoreTests.swift`.
+
+**Interfaces:**
+- `LocalChatStore.load() throws -> [ChatThread]`, `save(_ thread: ChatThread) throws`, and `delete(threadID: UUID) throws`.
+- `AttachmentStore.save(_ bytes: Data, threadID: UUID) throws -> UUID`, `load(_ id: UUID, threadID: UUID) throws -> Data`, and `deleteAll(threadID: UUID) throws`.
+- Use SwiftData for chat/message records. Store images as files in a per-chat directory under Application Support; persist only attachment IDs and safe relative paths. Write image files atomically. Delete attachment files when deleting a chat.
+
+- [ ] **Step 1: Add failing tests** — `testRestoresThreadAfterStoreRecreation`, `testDeletesOnlySelectedThreadAndAttachments`, `testFailedSaveDoesNotReportSuccess`, and `testMissingAttachmentReturnsRecoverableError`.
+- [ ] **Step 2: Run each new test with `xcodebuild test -project PetChat.xcodeproj -scheme PetChat -destination 'platform=macOS'` and confirm failure before implementation.**
+- [ ] **Step 3: Implement the two store interfaces** with an injectable in-memory SwiftData container and temporary attachment root for tests. Save after each user turn, each streamed pet update, and terminal turn status.
+- [ ] **Step 4: Rerun the store tests and confirm persistence, isolation, and deletion assertions pass.**
+- [ ] **Step 5: Commit** `feat: persist local chats and attachments`.
+
+### Task 4: Implement Ollama discovery, text/images, and streaming
+
+**Files:**
+- Create `PetChat/Providers/OllamaProvider.swift`.
+- Create `PetChat/Providers/OllamaProtocol.swift` only if a focused transport seam is required by the tests.
+- Test in `PetChatTests/Providers/OllamaProviderTests.swift` and `PetChatTests/Providers/OllamaStreamParserTests.swift`.
+
+**Interfaces:**
+- `OllamaProvider` conforms to `ChatProvider`; default endpoint is `http://localhost:11434`.
+- List installed models, determine image capability/context metadata using Ollama's model details, send the current prompt plus `images` only for image-capable models, and parse the `/api/chat` newline-delimited JSON stream. Each delta emits `.textDelta`; only a valid terminal response emits `.completed`.
+
+- [ ] **Step 1: Add failing URLProtocol-backed tests** — `testListsInstalledModels`, `testRejectsImagesForTextOnlyModel`, `testEmitsOrderedDeltasAndCompletion`, `testTruncatedStreamThrowsWithoutCompletion`, and `testCancelStopsUnderlyingRequest`.
+- [ ] **Step 2: Run the Ollama provider tests and confirm the transport/stream assertions fail.**
+- [ ] **Step 3: Implement `OllamaProvider`** using URLSession, bounded JSON-line parsing, cancellation propagation, and local model details; never assume every installed model accepts images.
+- [ ] **Step 4: Rerun the Ollama tests and confirm all pass.**
+- [ ] **Step 5: Commit** `feat: add streaming Ollama provider`.
+
+### Task 5: Implement direct ChatGPT sign-in and streaming provider
+
+**Precondition:** Before implementing account access, recheck current Sign in with ChatGPT rules. If the required local/open-source eligibility does not fit this project, stop this task and return the constraint for review. Do not substitute Codex CLI reuse, a copied Codex credential, or an API key.
+
+**Files:**
+- Create `PetChat/Auth/ChatGPTOAuthClient.swift`.
+- Create `PetChat/Auth/KeychainCredentialStore.swift`.
+- Create `PetChat/Auth/ChatGPTCredential.swift`.
+- Create `PetChat/Providers/OpenAIPlanProvider.swift`.
+- Create `PetChatTests/Auth/ChatGPTOAuthClientTests.swift`.
+- Create `PetChatTests/Auth/KeychainCredentialStoreTests.swift`.
+- Create `PetChatTests/Providers/OpenAIPlanProviderTests.swift`.
+
+**Interfaces:**
+- `KeychainCredentialStore.load(accountID: String) throws -> ChatGPTCredential?`, `save(_ credential: ChatGPTCredential, accountID: String) throws`, and `delete(accountID: String) throws`.
+- `ChatGPTOAuthClient.signIn() async throws -> ChatGPTCredential` starts the system browser and an exact `127.0.0.1` loopback callback. Generate and verify fresh OAuth state, OIDC nonce, and PKCE for every attempt; validate issuer, signature, audience, expiry, account identity, and granted scopes before saving credentials.
+- `OpenAIPlanProvider` conforms to `ChatProvider`, returns only models presented by the supported client catalog, sends each required thread turn to `/v1/responses` with `store: false` and `stream: true`, parses SSE text deltas and terminal events, and cancels by closing the request task.
+- Tokens, authorization codes, PKCE verifiers, and callback query strings never appear in user-facing errors, test output, or logs.
+
+- [ ] **Step 1: Add failing fixture-based OAuth tests** — valid registration and refresh; wrong state/nonce; expired and wrong-audience ID tokens; missing granted scope; account mismatch; and a rejected callback leaving the previous Keychain item unchanged.
+- [ ] **Step 2: Add failing provider stream tests** — text/image payload selection, ordered SSE deltas, failed/completed event handling, missing model access, and request cancellation. Use fake token responses; never use a real ChatGPT token in automated tests.
+- [ ] **Step 3: Run the auth/provider tests and confirm each security or stream assertion fails.**
+- [ ] **Step 4: Implement OAuth validation with Apple Security/CryptoKit primitives, Keychain storage, token refresh, and the streaming Responses provider.**
+- [ ] **Step 5: Rerun auth/provider tests and confirm all pass without token material in output.**
+- [ ] **Step 6: Manually validate one browser sign-in and one streamed answer only after the user starts the app's own sign-in flow and the SIWC route is confirmed eligible.**
+- [ ] **Step 7: Commit** `feat: add direct ChatGPT plan provider`.
+
+### Task 6: Connect chat state to the native interface
+
+**Files:**
+- Create `PetChat/Conversation/ChatCoordinator.swift`.
+- Create `PetChat/App/AppModel.swift`.
+- Create `PetChat/Views/SetupView.swift`.
+- Create `PetChat/Views/ChatPanelView.swift`.
+- Create `PetChat/Views/MessageRowView.swift`.
+- Create `PetChat/Views/ComposerView.swift`.
+- Test in `PetChatTests/Conversation/ChatCoordinatorTests.swift`.
+- Test in `PetChatTests/Views/ChatAccessibilityTests.swift`.
+
+**Interfaces:**
+- `ChatCoordinator.send(text:attachmentIDs:threadID:) async throws`, `stop(threadID:) async`, `newThread(providerID:modelID:) throws -> ChatThread`, and `deleteThread(_ id: UUID) throws`.
+- Inject `[ProviderID: any ChatProvider]`, `LocalChatStore`, `AttachmentStore`, and `ContextBuilder` into the coordinator. Persist each message/stream delta/terminal status through the store.
+- `AppModel` exposes the current thread, selected provider/model, loading state, and pending draft to SwiftUI. Switching provider/model creates a fresh thread and never copies old messages.
+
+- [ ] **Step 1: Add failing coordinator tests** — ordered streamed UI state; stop persists a partial marked response; provider error retains draft/attachments; switching provider/model starts empty context; deleted chat cannot be sent.
+- [ ] **Step 2: Add accessibility tests** for labelled pet, composer, Send, Stop, Tell me more, and close controls.
+- [ ] **Step 3: Run the new tests and confirm they fail on the app shell.**
+- [ ] **Step 4: Implement coordinator, first-run provider/model selection, message list, brief-reply prompt and Tell me more flow, fixed composer, streaming indicator, Stop, Retry/Reconnect, New Chat, and Delete Chat.**
+- [ ] **Step 5: Rerun coordinator and accessibility tests; confirm chronological transcript, keyboard labels, cancellation and draft recovery.**
+- [ ] **Step 6: Commit** `feat: connect streaming chats to the pet panel`.
+
+### Task 7: Build the floating pet, keyboard, menu bar, and display lifecycle
+
+**Files:**
+- Create `PetChat/Platform/PetPanelController.swift`.
+- Create `PetChat/Platform/GlobalShortcutController.swift`.
+- Create `PetChat/Platform/MenuBarController.swift`.
+- Create `PetChat/Views/PetCharacterView.swift`.
+- Create `PetChat/Views/SettingsView.swift`.
+- Create `PetChatTests/Platform/PetPositionTests.swift`.
+- Create `PetChatTests/Platform/ShortcutStateTests.swift`.
+- Create `PetChatUITests/PetPanelUITests.swift`.
+
+**Interfaces:**
+- `PetPanelController.showChat()`, `collapseChat(preservingDraft: Bool)`, `showPetOnly()`, `hidePet()`, and `repositionPet(for displayID: CGDirectDisplayID)`.
+- `GlobalShortcutController.register(_ shortcut: Shortcut) throws` reports a registration conflict; default is Control–Option–Space and Settings permits a replacement.
+- `MenuBarController` exposes Show/Hide, Settings, and Quit. Pet drag position is stored by display ID and clamped into that display's visible frame.
+
+- [ ] **Step 1: Add failing position tests** for clamping near all four screen edges and a removed display; add a shortcut conflict test.
+- [ ] **Step 2: Add UI checks** for the 64-point pet, panel opening/focus, Escape preserving draft, and close behavior.
+- [ ] **Step 3: Run the platform tests and confirm failure before implementation.**
+- [ ] **Step 4: Implement an accessory app with an AppKit floating panel, approved panel dimensions, persisted draggable position, menu-bar controls, configurable Carbon hotkey, and selected-display recovery.**
+- [ ] **Step 5: Create one transparent cat asset from the approved concept. Animate occasional idle blink, subtle breathing while idle, a reduced-motion-safe thinking state, and a brief completion reaction. Keep sound disabled.**
+- [ ] **Step 6: Rerun platform/UI checks on the Mac; manually exercise drag, focus ownership, hotkey conflict, screen edges, display disconnect, and Reduce Motion.**
+- [ ] **Step 7: Commit** `feat: add floating animated pet and menu controls`.
+
+### Task 8: Add explicit screen-region capture and safe image submission
+
+**Files:**
+- Create `PetChat/Platform/RegionCaptureController.swift`.
+- Create `PetChat/Views/RegionSelectionOverlay.swift`.
+- Create `PetChatTests/Platform/RegionCaptureTests.swift`.
+- Extend `PetChatTests/Conversation/ChatCoordinatorTests.swift`.
+- Extend `PetChatUITests/PetPanelUITests.swift`.
+
+**Interfaces:**
+- `RegionCaptureController.captureRegion() async throws -> Data?` returns PNG bytes after a successful selection, `nil` on Escape, or a permission/provider error.
+- `RegionSelectionOverlay` yields a rectangle in the selected display's coordinates. Convert using display scale before asking ScreenCaptureKit for a single-frame capture. Hide the pet and chat before selection/capture and restore the chat with preview on success.
+
+- [ ] **Step 1: Add failing tests** for Escape cancellation, denied screen permission, invalid/empty selection, Retina scale conversion, selected-display bounds, and preview retention until Send.
+- [ ] **Step 2: Run capture/coordinator/UI tests and confirm they fail.**
+- [ ] **Step 3: Implement the ScreenCaptureKit picker and region capture** with the required `NSScreenCaptureUsageDescription` and attach the resulting PNG only to the current user's message.
+- [ ] **Step 4: Rerun tests and manually verify first-use permission, selection, cancel, preview, attachment persistence, and a vision-model question.**
+- [ ] **Step 5: Commit** `feat: capture and attach explicit screen regions`.
+
+### Task 9: Add first-run settings, login launch, recovery, and accessibility details
+
+**Files:**
+- Create `PetChat/Platform/LoginItemController.swift`.
+- Modify `PetChat/Views/SetupView.swift`.
+- Modify `PetChat/Views/SettingsView.swift`.
+- Modify `PetChat/Platform/MenuBarController.swift`.
+- Create `PetChatTests/Platform/LoginItemControllerTests.swift`.
+- Extend `PetChatTests/Views/ChatAccessibilityTests.swift`.
+- Extend `PetChatUITests/PetPanelUITests.swift`.
+
+**Interfaces:**
+- `LoginItemController.isEnabled: Bool` and `setEnabled(_ enabled: Bool) throws` use `SMAppService.mainApp`.
+- Settings persist the last selected provider/model, hotkey, display ID, position, and opt-in login setting. ChatGPT sign-out deletes only ChatGPT credentials and starts no request.
+
+- [ ] **Step 1: Add failing tests** for login launch default-off/opt-in, provider/model restoration, chat-provider identity persistence across restart, sign-out, and reduced-motion behavior.
+- [ ] **Step 2: Run settings/accessibility/platform tests and confirm failure.**
+- [ ] **Step 3: Implement startup consent and controls, permission explanations, VoiceOver labels, Dynamic Type within the panel, contrast checks, reduced-motion handling, and clean interrupted-task shutdown.**
+- [ ] **Step 4: Rerun tests and manually verify login prompt/settings, sign-out, screen permission recovery, VoiceOver, and Reduce Motion.**
+- [ ] **Step 5: Commit** `feat: finish setup, preferences, and accessibility`.
+
+### Task 10: Validate the integrated release on the target Mac
+
+**Files:**
+- Modify `PetChatUITests/ChatFlowUITests.swift`.
+- Modify `README.md` with build/run, permissions, first-run setup, provider setup, login launch, and known ChatGPT eligibility limits.
+- Modify `PetChat.xcodeproj/project.pbxproj` only for verified signing, permission descriptions, and bundle metadata required by the final checks.
+
+**Interfaces:**
+- Use only the provider, coordinator, store, panel, capture, and settings interfaces from Tasks 2–9; do not add app control or background request paths.
+
+- [ ] **Step 1: Add end-to-end UI coverage** for plain text through a fake provider, follow-up, Tell me more, Stop/Retry, capture preview/send, new provider chat, restart restoration, and delete.
+- [ ] **Step 2: Run `xcodebuild test -project PetChat.xcodeproj -scheme PetChat -destination 'platform=macOS'` and confirm every automated test passes.**
+- [ ] **Step 3: Run `xcodebuild build -project PetChat.xcodeproj -scheme PetChat -configuration Release -destination 'platform=macOS'` and confirm the signed local app bundle builds.**
+- [ ] **Step 4: Manually test the two provider flows and measure time to first visible text and completion using the user's installed Ollama model and eligible ChatGPT account, if available. Record actual machine/OS/model values in the README; do not claim a universal response time.**
+- [ ] **Step 5: Review application logs and test output for tokens, image bytes, and unsubmitted prompts; confirm chat deletion removes only its own attachment files.**
+- [ ] **Step 6: Commit** `test: validate pet chat on macOS`.
+
+## Handoff
+
+Read and update task checkboxes only when implementing the plan. Do not begin Task 1 until the user has reviewed and approved this plan and selected an execution method. Reconfirm the proposed macOS deployment floor and the Sign in with ChatGPT local/open-source eligibility before committing to either API surface.
