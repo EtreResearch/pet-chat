@@ -85,4 +85,4 @@ At this checkpoint, `CONTEXT.md` and `docs/adr/0001-chatgpt-via-codex-cli.md` we
 
 ## Next stages
 
-Finish the interview, compare implementation approaches, and review the design sections with the user. Then write and review the full specification, followed by the implementation plan. Approval of individual choices and the request for Git commits do not constitute approval of an unwritten specification or implementation plan.
+Desktop behavior, AI and storage, and failure handling have been reviewed and approved in chat. The next stage is a written specification review, followed—only after its approval—by an implementation plan and selection of execution method.
