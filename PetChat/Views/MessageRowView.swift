@@ -3,6 +3,7 @@ import SwiftUI
 struct MessageRowView: View {
     let message: ChatMessage
     let outsideContext: Bool
+    let isStreaming: Bool
 
     var body: some View {
         VStack(alignment: .leading, spacing: 3) {
@@ -12,7 +13,7 @@ struct MessageRowView: View {
             if !message.attachmentIDs.isEmpty {
                 Text("\(message.attachmentIDs.count) image attached").font(.caption)
             }
-            if message.role == .pet && message.status != .complete {
+            if message.role == .pet && message.status != .complete && !isStreaming {
                 Text(message.status == .stopped ? "Stopped" : "Interrupted")
                     .font(.caption)
                     .foregroundStyle(.secondary)

@@ -113,6 +113,8 @@ final class AppModel {
     func retry() async { await submit() }
 
     func tellMeMore() async {
+        guard draft.isEmpty, attachmentIDs.isEmpty,
+              thread?.messages.last?.role == .pet, thread?.messages.last?.status == .complete else { return }
         draft = ChatCoordinator.expansionQuestion
         await submit()
     }

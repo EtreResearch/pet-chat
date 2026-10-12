@@ -63,12 +63,14 @@ final class ChatCoordinator {
               thread.providerID == selected.providerID, thread.modelID == selected.modelID else { throw Error.missingThread }
         guard let model = models.first(where: { $0.id == thread.modelID }) else { throw Error.missingModel }
         guard activeRequests[threadID] == nil else { throw Error.busy }
-        let images = try Dictionary(uniqueKeysWithValues: attachmentIDs.map { ($0, try attachments.load($0, threadID: threadID)) })
+        var seen = Set<UUID>()
+        let imageIDs = attachmentIDs.filter { seen.insert($0).inserted }
+        let images = try Dictionary(uniqueKeysWithValues: imageIDs.map { ($0, try attachments.load($0, threadID: threadID)) })
         var updated = thread
         if updated.messages.count >= 2,
            updated.messages[updated.messages.count - 2].role == .user,
            updated.messages[updated.messages.count - 2].text == text,
-           updated.messages[updated.messages.count - 2].attachmentIDs == attachmentIDs,
+           updated.messages[updated.messages.count - 2].attachmentIDs == imageIDs,
            updated.messages.last?.role == .pet,
            updated.messages.last?.status == .failed {
             updated.messages.removeLast(2)
@@ -76,10 +78,10 @@ final class ChatCoordinator {
         let promptText = text == Self.expansionQuestion
             ? "Give more detail about your previous answer.\n\n\(text)"
             : "Answer concisely in one to three sentences or a few short bullets.\n\n\(text)"
-        let prompt = ContextBuilder.build(thread: updated, currentText: promptText, currentAttachmentIDs: attachmentIDs,
+        let prompt = ContextBuilder.build(thread: updated, currentText: promptText, currentAttachmentIDs: imageIDs,
                                           contextWindowTokens: model.contextWindowTokens)
         let request = GenerationRequest(id: UUID(), modelID: thread.modelID, messages: prompt, imageData: images)
-        updated.messages.append(ChatMessage(role: .user, text: text, attachmentIDs: attachmentIDs))
+        updated.messages.append(ChatMessage(role: .user, text: text, attachmentIDs: imageIDs))
         updated.messages.append(ChatMessage(role: .pet, text: "", status: .failed))
         try save(updated)
         activeRequests[threadID] = request.id

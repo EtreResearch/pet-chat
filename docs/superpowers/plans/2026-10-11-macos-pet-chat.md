@@ -160,12 +160,12 @@
 - Inject `[ProviderID: any ChatProvider]`, `LocalChatStore`, `AttachmentStore`, and `ContextBuilder` into the coordinator. Persist each message/stream delta/terminal status through the store.
 - `AppModel` exposes the current thread, selected provider/model, loading state, and pending draft to SwiftUI. Switching provider/model creates a fresh thread and never copies old messages.
 
-- [ ] **Step 1: Add failing coordinator tests** — ordered streamed UI state; stop persists a partial marked response; provider error retains draft/attachments; switching provider/model starts empty context; deleted chat cannot be sent.
-- [ ] **Step 2: Add accessibility tests** for labelled pet, composer, Send, Stop, Tell me more, and close controls.
-- [ ] **Step 3: Run the new tests and confirm they fail on the app shell.**
-- [ ] **Step 4: Implement coordinator, first-run provider/model selection, message list, brief-reply prompt and Tell me more flow, fixed composer, streaming indicator, Stop, Retry/Reconnect, New Chat, and Delete Chat.**
-- [ ] **Step 5: Rerun coordinator and accessibility tests; confirm chronological transcript, keyboard labels, cancellation and draft recovery.**
-- [ ] **Step 6: Commit** `feat: connect streaming chats to the pet panel`.
+- [x] **Step 1: Add failing coordinator tests** — ordered streamed UI state; stop persists a partial marked response; provider error retains draft/attachments; switching provider/model starts empty context; deleted chat cannot be sent.
+- [x] **Step 2: Add accessibility tests** for labelled pet, composer, Send, Stop, Tell me more, and close controls.
+- [x] **Step 3: Run the new tests and confirm they fail on the app shell.**
+- [x] **Step 4: Implement coordinator, first-run provider/model selection, message list, brief-reply prompt and Tell me more flow, fixed composer, streaming indicator, Stop, Retry/Reconnect, New Chat, and Delete Chat.**
+- [x] **Step 5: Rerun coordinator and accessibility tests; confirm chronological transcript, keyboard labels, cancellation and draft recovery.**
+- [x] **Step 6: Commit** `feat: connect streaming chats to the pet panel`.
 
 ### Task 7: Build the floating pet, keyboard, menu bar, and display lifecycle
 

@@ -32,7 +32,8 @@ struct ChatPanelView: View {
                 ScrollView {
                     LazyVStack(spacing: 8) {
                         ForEach(model.thread?.messages ?? []) { message in
-                            MessageRowView(message: message, outsideContext: model.excludedMessageIDs.contains(message.id))
+                            MessageRowView(message: message, outsideContext: model.excludedMessageIDs.contains(message.id),
+                                           isStreaming: model.isLoading && message.id == model.thread?.messages.last?.id)
                                 .id(message.id)
                         }
                         if model.isLoading {
@@ -62,7 +63,7 @@ struct ChatPanelView: View {
                 .padding(.horizontal, 10)
             }
             Button("Tell me more") { Task { await model.tellMeMore() } }
-                .disabled(model.isLoading || !model.draft.isEmpty || model.thread?.messages.last?.role != .pet || model.thread?.messages.last?.status != .complete)
+                .disabled(model.isLoading || !model.draft.isEmpty || !model.attachmentIDs.isEmpty || model.thread?.messages.last?.role != .pet || model.thread?.messages.last?.status != .complete)
                 .accessibilityLabel("Tell me more")
                 .padding(.bottom, 4)
             Divider()

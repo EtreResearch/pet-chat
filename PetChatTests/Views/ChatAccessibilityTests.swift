@@ -22,15 +22,33 @@ final class ChatAccessibilityTests: XCTestCase {
         })
         hosting.frame = CGRect(x: 0, y: 0, width: 340, height: 484)
         let window = NSWindow(contentRect: hosting.frame, styleMask: .titled, backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
         window.contentView = hosting
         window.makeKeyAndOrderFront(nil)
-        defer { window.close() }
+        defer { window.contentView = nil; window.close() }
         hosting.layoutSubtreeIfNeeded()
 
         let labels = accessibilityLabels(in: AXUIElementCreateApplication(getpid()))
         for label in ["Pet", "Message", "Send", "Stop", "Tell me more", "Close"] {
             XCTAssertTrue(labels.contains(label), "Missing accessible \(label): \(labels)")
         }
+    }
+
+    func testStreamingReplyDoesNotAnnounceInterrupted() {
+        let row = NSHostingView(rootView: MessageRowView(
+            message: ChatMessage(role: .pet, text: "Partial", status: .failed),
+            outsideContext: false, isStreaming: true))
+        row.frame = CGRect(x: 0, y: 0, width: 300, height: 80)
+        let window = NSWindow(contentRect: row.frame, styleMask: .titled, backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = row
+        window.makeKeyAndOrderFront(nil)
+        defer { window.contentView = nil; window.close() }
+        row.layoutSubtreeIfNeeded()
+
+        let labels = accessibilityLabels(in: AXUIElementCreateApplication(getpid()))
+        XCTAssertTrue(labels.contains { $0.contains("Partial") })
+        XCTAssertFalse(labels.contains { $0.contains("Interrupted") })
     }
 
     private func accessibilityLabels(in element: AXUIElement, depth: Int = 0) -> [String] {

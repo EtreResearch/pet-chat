@@ -290,6 +290,32 @@ final class ChatCoordinatorTests: XCTestCase {
         await connecting.value
         XCTAssertEqual(model.models.map(\.id), ["text"])
     }
+
+    func testDuplicateAttachmentIDDoesNotCrashOrReadAnotherThread() async throws {
+        let fixture = try Fixture()
+        let thread = try fixture.coordinator.newThread(providerID: .ollama, modelID: "text")
+        let image = try fixture.attachments.save(Data([1]), threadID: thread.id)
+
+        try await fixture.coordinator.send(text: "Look", attachmentIDs: [image, image], threadID: thread.id)
+
+        XCTAssertEqual(fixture.provider.requests.last?.imageData, [image: Data([1])])
+    }
+
+    func testTellMeMoreDoesNotSubmitPendingImage() async throws {
+        let fixture = try Fixture()
+        let model = AppModel(coordinator: fixture.coordinator)
+        try model.select(providerID: .ollama, modelID: "text")
+        model.draft = "Why?"
+        await model.submit()
+        let thread = try XCTUnwrap(model.thread)
+        let image = try fixture.attachments.save(Data([1]), threadID: thread.id)
+        model.attachmentIDs = [image]
+
+        await model.tellMeMore()
+
+        XCTAssertEqual(fixture.provider.requests.count, 1)
+        XCTAssertEqual(model.attachmentIDs, [image])
+    }
 }
 
 @MainActor private final class AuthGate {
