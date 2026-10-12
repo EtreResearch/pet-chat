@@ -11,6 +11,11 @@ final class PetPanelUITests: XCTestCase {
         pet.click()
         let close = app.buttons["Close"]
         XCTAssertTrue(close.waitForExistence(timeout: 3))
+        // Capture controls exist only after setup; never invoke screen permission in automation.
+        if app.textViews["Message"].exists {
+            XCTAssertTrue(app.buttons["Capture area"].exists)
+            XCTAssertTrue(app.buttons["Paste image"].exists)
+        }
         close.click()
         XCTAssertFalse(close.exists)
         XCTAssertTrue(pet.exists)

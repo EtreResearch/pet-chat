@@ -52,6 +52,9 @@ final class PetPanelController: NSObject {
     private var fullScreen = false
     private var summonedInFullScreen = false
     private var chatContentInstalled = false
+    private var panelRevision = 0
+    private var captureInProgress = false
+    private var captureMayFocus = true
 
     var displays: [PetDisplay] { displayProvider() }
 
@@ -92,6 +95,7 @@ final class PetPanelController: NSObject {
             panel.isOpaque = false
             panel.backgroundColor = .clear
         }
+        model.captureRegion = { [weak self] in try await self?.captureRegion() }
         petPanel.hasShadow = false
         chatPanel.hasShadow = true
         chatPanel.title = "Pet Chat"
@@ -110,7 +114,28 @@ final class PetPanelController: NSObject {
 
     deinit { NotificationCenter.default.removeObserver(self); NSWorkspace.shared.notificationCenter.removeObserver(self) }
 
-    func showChat() {
+    func captureRegion(using capture: @MainActor () async throws -> Data? = {
+        try await RegionCaptureController().captureRegion()
+    }) async throws -> Data? {
+        guard !captureInProgress else { throw ChatCoordinator.Error.busy }
+        captureInProgress = true
+        captureMayFocus = true
+        let revision = panelRevision
+        petPanel.orderOut(nil)
+        chatPanel.orderOut(nil)
+        defer {
+            captureInProgress = false
+            if panelRevision == revision, wantsPetVisible {
+                presentChat(activate: false, focus: captureMayFocus && NSApp.isActive)
+            }
+        }
+        return try await capture()
+    }
+
+    func showChat() { presentChat(activate: true, focus: true) }
+
+    private func presentChat(activate: Bool, focus: Bool) {
+        panelRevision += 1
         if !chatContentInstalled {
             chatPanel.contentView = NSHostingView(rootView: FloatingChatRootView(model: model, onClose: { [weak self] in
                 self?.collapseChat(preservingDraft: true)
@@ -121,8 +146,9 @@ final class PetPanelController: NSObject {
         summonedInFullScreen = fullScreen
         petPanel.orderFrontRegardless()
         placeChat()
-        NSApp.activate(ignoringOtherApps: true)
-        chatPanel.makeKeyAndOrderFront(nil)
+        if activate { NSApp.activate(ignoringOtherApps: true) }
+        if focus { chatPanel.makeKeyAndOrderFront(nil) }
+        else { chatPanel.orderFrontRegardless() }
         DispatchQueue.main.async { [weak self] in
             guard let self, NSApp.isActive, self.chatPanel.isKeyWindow else { return }
             self.chatPanel.contentView?.layoutSubtreeIfNeeded()
@@ -133,18 +159,21 @@ final class PetPanelController: NSObject {
     }
 
     func collapseChat(preservingDraft: Bool) {
+        panelRevision += 1
         chatPanel.orderOut(nil)
         if !preservingDraft { model.draft = "" }
         if fullScreen { summonedInFullScreen = false; petPanel.orderOut(nil) }
     }
 
     func showPetOnly() {
+        panelRevision += 1
         wantsPetVisible = true
         chatPanel.orderOut(nil)
         if !fullScreen || summonedInFullScreen { petPanel.orderFrontRegardless() }
     }
 
     func hidePet() {
+        panelRevision += 1
         wantsPetVisible = false
         summonedInFullScreen = false
         petPanel.orderOut(nil)
@@ -174,13 +203,17 @@ final class PetPanelController: NSObject {
         placeChat()
     }
 
-    func applicationDidDeactivate() { chatPanel.resignKey() }
+    func applicationDidDeactivate() {
+        captureMayFocus = false
+        chatPanel.resignKey()
+    }
 
     func activeSpaceDidChange(isFullScreen: Bool) {
+        panelRevision += 1
         fullScreen = isFullScreen
         summonedInFullScreen = false
         if isFullScreen { petPanel.orderOut(nil); chatPanel.orderOut(nil) }
-        else if wantsPetVisible { petPanel.orderFrontRegardless() }
+        else if wantsPetVisible && !captureInProgress { petPanel.orderFrontRegardless() }
     }
 
     private func placeChat() {

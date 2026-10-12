@@ -7,15 +7,18 @@ import XCTest
 
 @MainActor
 final class ChatAccessibilityTests: XCTestCase {
-    func testChatPanelLabelsPetComposerAndActions() throws {
+    func testChatPanelLabelsPetComposerAndActions() async throws {
         let attachments = AttachmentStore(root: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString))
+        defer { try? FileManager.default.removeItem(at: attachments.root) }
         let container = try ModelContainer(for: ChatRecord.self, MessageRecord.self,
                                            configurations: ModelConfiguration(isStoredInMemoryOnly: true))
         let store = try LocalChatStore(container: container, attachments: attachments)
         let coordinator = try ChatCoordinator(providers: [.ollama: AccessibilityProvider()], store: store,
                                               attachments: attachments)
-        let model = AppModel(coordinator: coordinator)
+        let model = AppModel(coordinator: coordinator, defaults: UserDefaults(suiteName: UUID().uuidString)!)
         try model.select(providerID: .ollama, modelID: "test")
+        try model.attachImage(testPNG())
+        model.draft = "What is in this picture?"
         let hosting = NSHostingView(rootView: VStack(spacing: 0) {
             ChatPanelView(model: model, onClose: {}, onChangeModel: {})
             PetView()
@@ -28,8 +31,11 @@ final class ChatAccessibilityTests: XCTestCase {
         defer { window.contentView = nil; window.close() }
         hosting.layoutSubtreeIfNeeded()
 
+        try await Task.sleep(for: .milliseconds(150))
+        hosting.layoutSubtreeIfNeeded()
+        hosting.displayIfNeeded()
         let labels = accessibilityLabels(in: AXUIElementCreateApplication(getpid()))
-        for label in ["Pet", "Message", "Send", "Stop", "Tell me more", "Close"] {
+        for label in ["Pet", "Message", "Send", "Stop", "Tell me more", "Close", "Capture area", "Paste image", "Attached image", "Remove image"] {
             XCTAssertTrue(labels.contains(label), "Missing accessible \(label): \(labels)")
         }
     }

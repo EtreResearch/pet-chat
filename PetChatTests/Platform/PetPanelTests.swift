@@ -32,6 +32,48 @@ final class PetPanelTests: XCTestCase {
         XCTAssertEqual(model.draft, "Keep this question")
     }
 
+    func testCaptureHidesBothPanelsAndRestoresOnSuccessCancelAndError() async throws {
+        let controller = PetPanelController(model: try makeModel(), defaults: UserDefaults(suiteName: UUID().uuidString)!)
+        defer { controller.hidePet() }
+        for outcome in 0...2 {
+            controller.showChat()
+            do {
+                _ = try await controller.captureRegion(using: {
+                    XCTAssertFalse(controller.petPanel.isVisible)
+                    XCTAssertFalse(controller.chatPanel.isVisible)
+                    if outcome == 2 { throw CancellationError() }
+                    return outcome == 0 ? testPNG() : nil
+                })
+            } catch { XCTAssertEqual(outcome, 2) }
+            XCTAssertTrue(controller.petPanel.isVisible)
+            XCTAssertTrue(controller.chatPanel.isVisible)
+        }
+    }
+
+    func testCaptureRestoresVisibilityWithoutTakingFocusAfterDeactivation() async throws {
+        let controller = PetPanelController(model: try makeModel(), defaults: UserDefaults(suiteName: UUID().uuidString)!)
+        defer { controller.hidePet() }
+        controller.showChat()
+        _ = try await controller.captureRegion(using: {
+            controller.applicationDidDeactivate()
+            return nil
+        })
+        XCTAssertTrue(controller.chatPanel.isVisible)
+        XCTAssertFalse(controller.chatPanel.isKeyWindow)
+    }
+
+    func testCaptureDoesNotReopenPanelsAfterExplicitHide() async throws {
+        let controller = PetPanelController(model: try makeModel(), defaults: UserDefaults(suiteName: UUID().uuidString)!)
+        defer { controller.hidePet() }
+        controller.showChat()
+        _ = try await controller.captureRegion(using: {
+            controller.hidePet()
+            return testPNG()
+        })
+        XCTAssertFalse(controller.petPanel.isVisible)
+        XCTAssertFalse(controller.chatPanel.isVisible)
+    }
+
     func testAppSwitchDoesNotResummonOrRetakeFocus() throws {
         let controller = PetPanelController(model: try makeModel(), defaults: UserDefaults(suiteName: UUID().uuidString)!)
         defer { controller.hidePet() }

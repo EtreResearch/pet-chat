@@ -5,7 +5,7 @@ import Observation
 final class ChatCoordinator {
     static let expansionQuestion = "Tell me more about your last answer."
     enum Error: LocalizedError {
-        case missingThread, missingProvider, missingModel, busy, emptyMessage, incompleteResponse, stopped
+        case missingThread, missingProvider, missingModel, busy, emptyMessage, incompleteResponse, stopped, unsupportedImages
 
         var errorDescription: String? {
             switch self {
@@ -15,6 +15,7 @@ final class ChatCoordinator {
             case .busy: "Wait for the current answer or press Stop."
             case .emptyMessage: "Enter a question or attach an image."
             case .incompleteResponse: "The answer ended before it completed. Try again."
+            case .unsupportedImages: "This model does not support images. Select an image-capable model."
             case .stopped: "Stopped before sending. Your draft is saved."
             }
         }
@@ -32,6 +33,19 @@ final class ChatCoordinator {
         self.store = store
         self.attachments = attachments
         threads = try store.load()
+    }
+
+    func attachImage(_ bytes: Data, threadID: UUID) throws -> UUID {
+        guard threads.contains(where: { $0.id == threadID }) else { throw Error.missingThread }
+        return try attachments.save(bytes, threadID: threadID)
+    }
+
+    func imageData(for id: UUID, threadID: UUID) throws -> Data { try attachments.load(id, threadID: threadID) }
+
+    func removeDraftAttachment(_ id: UUID, threadID: UUID) throws {
+        guard let thread = threads.first(where: { $0.id == threadID }) else { throw Error.missingThread }
+        guard !thread.messages.contains(where: { $0.attachmentIDs.contains(id) }) else { return }
+        try attachments.delete(id, threadID: threadID)
     }
 
     func models(for providerID: ProviderID) async throws -> [ProviderModel] {
@@ -80,6 +94,7 @@ final class ChatCoordinator {
         guard let thread = threads.first(where: { $0.id == threadID }),
               thread.providerID == selected.providerID, thread.modelID == selected.modelID else { throw Error.missingThread }
         guard let model = models.first(where: { $0.id == thread.modelID }) else { throw Error.missingModel }
+        guard attachmentIDs.isEmpty || model.supportsImages else { throw Error.unsupportedImages }
         var seen = Set<UUID>()
         let imageIDs = attachmentIDs.filter { seen.insert($0).inserted }
         let images = try Dictionary(uniqueKeysWithValues: imageIDs.map { ($0, try attachments.load($0, threadID: threadID)) })

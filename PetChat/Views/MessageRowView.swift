@@ -4,6 +4,7 @@ struct MessageRowView: View {
     let message: ChatMessage
     let outsideContext: Bool
     let isStreaming: Bool
+    var imageData: [UUID: Data] = [:]
 
     var body: some View {
         VStack(alignment: .leading, spacing: 3) {
@@ -11,7 +12,12 @@ struct MessageRowView: View {
                 .font(.caption.bold())
             if !message.text.isEmpty { Text(message.text).textSelection(.enabled) }
             if !message.attachmentIDs.isEmpty {
-                Text("\(message.attachmentIDs.count) image attached").font(.caption)
+                HStack {
+                    ForEach(message.attachmentIDs, id: \.self) { id in
+                        AttachmentImage(bytes: imageData[id])
+                    }
+                }
+                .accessibilityLabel("\(message.attachmentIDs.count) image attached")
             }
             if message.role == .pet && message.status != .complete && !isStreaming {
                 Text(message.status == .stopped ? "Stopped" : "Interrupted")

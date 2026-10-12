@@ -31,8 +31,8 @@ final class LocalChatStoreTests: XCTestCase {
         let store = try LocalChatStore(container: container, attachments: attachments)
         let first = ChatThread(providerID: .ollama, modelID: "a")
         let second = ChatThread(providerID: .chatGPT, modelID: "b")
-        let firstImage = try attachments.save(Data([1]), threadID: first.id)
-        let secondImage = try attachments.save(Data([2]), threadID: second.id)
+        let firstImage = try attachments.save(testPNG(1), threadID: first.id)
+        let secondImage = try attachments.save(testPNG(2), threadID: second.id)
         try store.save(first)
         try store.save(second)
 
@@ -40,7 +40,7 @@ final class LocalChatStoreTests: XCTestCase {
 
         XCTAssertEqual(try store.load(), [second])
         XCTAssertThrowsError(try attachments.load(firstImage, threadID: first.id))
-        XCTAssertEqual(try attachments.load(secondImage, threadID: second.id), Data([2]))
+        XCTAssertEqual(try attachments.load(secondImage, threadID: second.id), testPNG(2))
     }
 
     func testFailedSaveDoesNotReportSuccess() throws {
@@ -64,7 +64,7 @@ final class LocalChatStoreTests: XCTestCase {
         let container = try ModelContainer(for: ChatRecord.self, MessageRecord.self, configurations: ModelConfiguration(isStoredInMemoryOnly: true))
         let attachments = AttachmentStore(root: root, removeItem: { _ in throw Failure.diskUnavailable })
         let thread = ChatThread(providerID: .ollama, modelID: "vision")
-        let image = try attachments.save(Data([7]), threadID: thread.id)
+        let image = try attachments.save(testPNG(7), threadID: thread.id)
         let store = try LocalChatStore(container: container, attachments: attachments)
         try store.save(thread)
 
@@ -85,7 +85,7 @@ final class LocalChatStoreTests: XCTestCase {
         let container = try ModelContainer(for: ChatRecord.self, MessageRecord.self, configurations: ModelConfiguration(isStoredInMemoryOnly: true))
         let attachments = AttachmentStore(root: root, removeItem: { _ in throw Failure.diskUnavailable })
         let thread = ChatThread(providerID: .ollama, modelID: "vision")
-        _ = try attachments.save(Data([7]), threadID: thread.id)
+        _ = try attachments.save(testPNG(7), threadID: thread.id)
         let store = try LocalChatStore(container: container, attachments: attachments)
         try store.save(thread)
 
@@ -101,12 +101,12 @@ final class LocalChatStoreTests: XCTestCase {
         let attachments = AttachmentStore(root: root)
         let container = try ModelContainer(for: ChatRecord.self, MessageRecord.self, configurations: ModelConfiguration(isStoredInMemoryOnly: true))
         let thread = ChatThread(providerID: .ollama, modelID: "vision")
-        let image = try attachments.save(Data([7]), threadID: thread.id)
+        let image = try attachments.save(testPNG(7), threadID: thread.id)
         try LocalChatStore(container: container, attachments: attachments).save(thread)
         let failing = try LocalChatStore(container: container, attachments: attachments, saveContext: { _ in throw Failure.databaseUnavailable })
 
         XCTAssertThrowsError(try failing.delete(threadID: thread.id)) { XCTAssertTrue($0 is Failure) }
         XCTAssertEqual(try LocalChatStore(container: container, attachments: attachments).load(), [thread])
-        XCTAssertEqual(try attachments.load(image, threadID: thread.id), Data([7]))
+        XCTAssertEqual(try attachments.load(image, threadID: thread.id), testPNG(7))
     }
 }

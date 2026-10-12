@@ -1,7 +1,16 @@
 import Foundation
+import ImageIO
 
 struct AttachmentStore {
-    enum Error: Swift.Error, Equatable { case missing }
+    enum Error: LocalizedError, Equatable {
+        case missing, invalidImage
+        var errorDescription: String? {
+            switch self {
+            case .missing: "The attached image could not be loaded. Add it again before sending."
+            case .invalidImage: "Choose or paste a valid image."
+            }
+        }
+    }
 
     let root: URL
     private let removeItem: (URL) throws -> Void
@@ -13,6 +22,10 @@ struct AttachmentStore {
     }
 
     func save(_ bytes: Data, threadID: UUID) throws -> UUID {
+        guard let source = CGImageSourceCreateWithData(bytes as CFData, nil),
+              CGImageSourceGetType(source) != nil, CGImageSourceGetCount(source) > 0,
+              CGImageSourceGetStatus(source) == .statusComplete,
+              CGImageSourceCreateImageAtIndex(source, 0, nil) != nil else { throw Error.invalidImage }
         let id = UUID()
         let directory = root.appendingPathComponent(threadID.uuidString, isDirectory: true)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -25,6 +38,11 @@ struct AttachmentStore {
             .appendingPathComponent(id.uuidString)
         guard FileManager.default.fileExists(atPath: path.path) else { throw Error.missing }
         return try Data(contentsOf: path)
+    }
+
+    func delete(_ id: UUID, threadID: UUID) throws {
+        let path = root.appendingPathComponent(threadID.uuidString).appendingPathComponent(id.uuidString)
+        if FileManager.default.fileExists(atPath: path.path) { try removeItem(path) }
     }
 
     func deleteAll(threadID: UUID) throws {

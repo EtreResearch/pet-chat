@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import Observation
 
@@ -11,7 +12,10 @@ final class AppModel {
     private(set) var selectedModelID = ""
     var draft = ""
     var attachmentIDs: [UUID] = []
+    var captureRegion: (@MainActor () async throws -> Data?)?
+    private(set) var isCapturing = false
     private(set) var isLoading = false
+    private var draftContextID = UUID()
     private var activeSubmissionID: UUID?
     private(set) var errorMessage: String?
     private(set) var models: [ProviderModel] = []
@@ -71,6 +75,7 @@ final class AppModel {
     func select(providerID: ProviderID, modelID: String) throws {
         guard !isLoading else { throw ChatCoordinator.Error.busy }
         let new = try coordinator.newThread(providerID: providerID, modelID: modelID)
+        draftContextID = UUID()
         currentThreadID = new.id
         selectedProviderID = providerID
         selectedModelID = modelID
@@ -87,11 +92,52 @@ final class AppModel {
         guard !isLoading else { throw ChatCoordinator.Error.busy }
         guard let id = currentThreadID else { return }
         try coordinator.deleteThread(id)
+        draftContextID = UUID()
         currentThreadID = coordinator.threads.last?.id
         if let thread { selectedProviderID = thread.providerID; selectedModelID = thread.modelID }
         draft = ""
         attachmentIDs = []
         errorMessage = nil
+    }
+
+    func attachImage(_ bytes: Data) throws {
+        guard let id = currentThreadID else { throw ChatCoordinator.Error.missingThread }
+        guard !isLoading else { throw ChatCoordinator.Error.busy }
+        attachmentIDs.append(try coordinator.attachImage(bytes, threadID: id))
+    }
+
+    func imageData(for id: UUID) -> Data? {
+        guard let threadID = currentThreadID else { return nil }
+        return try? coordinator.imageData(for: id, threadID: threadID)
+    }
+
+    func pasteImage(from pasteboard: NSPasteboard = .general) throws {
+        if let png = pasteboard.data(forType: .png) { try attachImage(png); return }
+        guard let image = NSImage(pasteboard: pasteboard), let tiff = image.tiffRepresentation,
+              let bitmap = NSBitmapImageRep(data: tiff),
+              let png = bitmap.representation(using: .png, properties: [:]) else { throw AttachmentStore.Error.invalidImage }
+        try attachImage(png)
+    }
+
+    func removeAttachment(_ id: UUID) throws {
+        guard let threadID = currentThreadID, !isLoading else { throw ChatCoordinator.Error.busy }
+        try coordinator.removeDraftAttachment(id, threadID: threadID)
+        attachmentIDs.removeAll { $0 == id }
+    }
+
+    func captureImage(using capture: (@MainActor () async throws -> Data?)? = nil) async {
+        guard let threadID = currentThreadID, !isLoading, !isCapturing,
+              let capture = capture ?? captureRegion else { return }
+        let contextID = draftContextID
+        isCapturing = true
+        defer { isCapturing = false }
+        do {
+            let bytes = try await capture()
+            guard draftContextID == contextID, currentThreadID == threadID else { return }
+            if let bytes { try attachImage(bytes) }
+        } catch {
+            if draftContextID == contextID, currentThreadID == threadID { report(error) }
+        }
     }
 
     func submit() async {

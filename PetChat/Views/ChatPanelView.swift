@@ -33,7 +33,10 @@ struct ChatPanelView: View {
                     LazyVStack(spacing: 8) {
                         ForEach(model.thread?.messages ?? []) { message in
                             MessageRowView(message: message, outsideContext: model.excludedMessageIDs.contains(message.id),
-                                           isStreaming: model.isLoading && message.id == model.thread?.messages.last?.id)
+                                           isStreaming: model.isLoading && message.id == model.thread?.messages.last?.id,
+                                           imageData: Dictionary(uniqueKeysWithValues: message.attachmentIDs.compactMap { id in
+                                               model.imageData(for: id).map { (id, $0) }
+                                           }))
                                 .id(message.id)
                         }
                         if model.isLoading {
