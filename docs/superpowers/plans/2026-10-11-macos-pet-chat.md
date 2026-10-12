@@ -252,12 +252,12 @@ Independent review approved with no findings. Signed unit target passed 134/134;
 **Interfaces:**
 - Use only the provider, coordinator, store, panel, capture, and settings interfaces from Tasks 2–9; do not add app control or background request paths. Automated UI fixtures use temporary persistence, isolated preferences and fake provider/capture/login services; they never use live credentials, images, model requests, or OS registration. Preserve fixture state only for intentional restart tests.
 
-- [ ] **Step 1: Add end-to-end UI coverage** for plain text through a fake provider, follow-up, Tell me more, Stop/Retry, capture preview/send, new provider chat, restart restoration, delete, Escape/draft retention, and Task 9 setup/settings controls. Capture window-only screenshots from synthetic fixture states for visual inspection; do not capture unrelated desktop content.
-- [ ] **Step 2: Run `xcodebuild test -project PetChat.xcodeproj -scheme PetChat -destination 'platform=macOS' -parallel-testing-enabled NO CODE_SIGN_IDENTITY=- CODE_SIGNING_ALLOWED=YES` and confirm every automated test passes. Local ad-hoc signing is required for this UI runner.**
-- [ ] **Step 3: Run `xcodebuild build -project PetChat.xcodeproj -scheme PetChat -configuration Release -destination 'platform=macOS' CODE_SIGN_IDENTITY=- CODE_SIGNING_ALLOWED=YES` and confirm the signed local app bundle builds. Copy the verified bundle to ignored `build/PetChat.app` and document how to run it; do not install or distribute it.**
+- [x] **Step 1: Add end-to-end UI coverage** for plain text through a fake provider, follow-up, Tell me more, Stop/Retry, capture preview/send, new provider chat, restart restoration, delete, Escape/draft retention, and Task 9 setup/settings controls. Capture window-only screenshots from synthetic fixture states for visual inspection; do not capture unrelated desktop content.
+- [x] **Step 2: Run `xcodebuild test -project PetChat.xcodeproj -scheme PetChat -destination 'platform=macOS' -parallel-testing-enabled NO CODE_SIGN_IDENTITY=- CODE_SIGNING_ALLOWED=YES` and confirm every automated test passes. Local ad-hoc signing is required for this UI runner.**
+- [x] **Step 3: Run `xcodebuild build -project PetChat.xcodeproj -scheme PetChat -configuration Release -destination 'platform=macOS' CODE_SIGN_IDENTITY=- CODE_SIGNING_ALLOWED=YES` and confirm the signed local app bundle builds. Copy the verified bundle to ignored `build/PetChat.app` and document how to run it; do not install or distribute it.**
 - [ ] **Step 4: Manually test the two provider flows and measure time to first visible text and completion using the user's installed Ollama model and eligible ChatGPT account, if available. Record actual machine/OS/model values in the README; do not claim a universal response time.**
-- [ ] **Step 5: Review application logs and test output for tokens, image bytes, and unsubmitted prompts; confirm chat deletion removes only its own attachment files.**
-- [ ] **Step 6: Commit** `test: validate pet chat on macOS`.
+- [x] **Step 5: Review application logs and test output for tokens, image bytes, and unsubmitted prompts; confirm chat deletion removes only its own attachment files.**
+- [x] **Step 6: Commit** `test: validate pet chat on macOS`.
 
 ## Handoff
 
