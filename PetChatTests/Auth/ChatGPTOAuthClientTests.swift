@@ -24,6 +24,55 @@ final class ChatGPTOAuthClientTests: XCTestCase {
         XCTAssertTrue(fixture.exchangeWasChecked)
     }
 
+    func testSignOutDeletesOnlyActiveAppCredentialAndStartsNoRequest() async throws {
+        let fixture = OAuthFixture()
+        defer { fixture.cleanup() }
+        let current = fixture.oldCredential
+        let other = ChatGPTCredential(subject: "other", clientID: "oaiapp_other", hostID: current.hostID,
+            email: nil, idToken: "other-id", accessToken: "other-access", refreshToken: "other-refresh",
+            scopes: current.scopes, expiresAt: .distantFuture)
+        try fixture.store.save(current, accountID: current.accountID)
+        try fixture.store.save(other, accountID: other.accountID)
+        try fixture.store.select(accountID: current.accountID)
+        try await fixture.client.signOut()
+        XCTAssertNil(try fixture.store.load(accountID: current.accountID))
+        XCTAssertNil(try fixture.store.activeAccountID())
+        XCTAssertEqual(try fixture.store.load(accountID: other.accountID), other)
+        XCTAssertEqual(try fixture.store.hostID(), current.hostID)
+        XCTAssertFalse(fixture.authorizeWasChecked)
+        XCTAssertFalse(fixture.exchangeWasChecked)
+        XCTAssertEqual(fixture.refreshRequestCount, 0)
+    }
+
+    func testSignOutAndShutdownCannotRestorePendingSignIn() async throws {
+        for shutdown in [false, true] {
+            let fixture = OAuthFixture()
+            defer { fixture.cleanup() }
+            fixture.signInStarted = expectation(description: "sign-in exchange started")
+            fixture.signInDelay = true
+            let client = fixture.client
+            let pending = Task { try? await client.signIn() }
+            await fulfillment(of: [fixture.signInStarted!], timeout: 2)
+            if shutdown { await client.shutdown() } else { try await client.signOut() }
+            _ = await pending.value
+            XCTAssertNil(try fixture.store.activeAccountID())
+            XCTAssertNil(try fixture.store.load(accountID: "oaiapp_pet:person-one"))
+        }
+    }
+
+    func testShutdownPreservesExistingCredentialAndRejectsNewSignIn() async throws {
+        let fixture = OAuthFixture()
+        defer { fixture.cleanup() }
+        let current = fixture.oldCredential
+        try fixture.store.save(current, accountID: current.accountID)
+        try fixture.store.select(accountID: current.accountID)
+        await fixture.client.shutdown()
+        do { _ = try await fixture.client.signIn(); XCTFail("Shutdown must reject sign-in") } catch {}
+        XCTAssertEqual(try fixture.store.load(accountID: current.accountID), current)
+        XCTAssertEqual(try fixture.store.activeAccountID(), current.accountID)
+        XCTAssertFalse(fixture.authorizeWasChecked)
+    }
+
     func testRS256PublishedJWKVerifiesSyntheticIDToken() async throws {
         let fixture = OAuthFixture(rsa: true)
         defer { fixture.cleanup() }
@@ -222,6 +271,8 @@ private final class OAuthFixture: @unchecked Sendable {
     let rejection: Rejection?
     let addingAccount: Bool
     let refreshDelay: Bool
+    var signInStarted: XCTestExpectation?
+    var signInDelay = false
     var refreshStarted: XCTestExpectation?
     private let refreshLock = NSLock()
     private var refreshRequests = 0
@@ -317,6 +368,8 @@ private final class OAuthFixture: @unchecked Sendable {
         if let verifier = field("code_verifier") {
             XCTAssertEqual(Data(SHA256.hash(data: Data(verifier.utf8))).urlBase64, FakeCallbackSession.lastChallenge)
         }
+        signInStarted?.fulfill()
+        if signInDelay { Thread.sleep(forTimeInterval: 0.2) }
         exchangeWasChecked = true
         return (200, try tokenResponse(nonce: FakeCallbackSession.lastNonce, refresh: false))
     }

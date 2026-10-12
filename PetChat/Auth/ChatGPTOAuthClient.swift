@@ -18,6 +18,9 @@ actor ChatGPTOAuthClient {
     private let callbackSession: OAuthCallbackSession
     private let noRedirects = OAuthNoRedirects()
     private var signInInProgress = false
+    private var signInTask: Task<ChatGPTCredential, Error>?
+    private var authorizationVersion = UUID()
+    private var isShuttingDown = false
     // shortcut: refreshes serialize within this app process; use an interprocess lock if multiple instances share Keychain.
     private var refreshTasks: [String: Task<ChatGPTCredential, Error>] = [:]
 
@@ -29,21 +32,40 @@ actor ChatGPTOAuthClient {
     }
 
     func signIn() async throws -> ChatGPTCredential {
-        guard !signInInProgress else { throw ChatGPTError.signInFailed }
-        signInInProgress = true
-        defer { signInInProgress = false }
         let accountID = try store.activeAccountID()
-        return try await authorize(existing: accountID.flatMap { try store.load(accountID: $0) })
+        return try await beginSignIn(existing: accountID.flatMap { try store.load(accountID: $0) })
     }
 
-    func signInNewAccount() async throws -> ChatGPTCredential {
-        guard !signInInProgress else { throw ChatGPTError.signInFailed }
+    func signInNewAccount() async throws -> ChatGPTCredential { try await beginSignIn(existing: nil) }
+
+    private func beginSignIn(existing: ChatGPTCredential?) async throws -> ChatGPTCredential {
+        guard !isShuttingDown, !signInInProgress else { throw ChatGPTError.signInFailed }
         signInInProgress = true
-        defer { signInInProgress = false }
-        return try await authorize(existing: nil)
+        let version = authorizationVersion
+        let task = Task { try await authorize(existing: existing, version: version) }
+        signInTask = task
+        defer { signInInProgress = false; signInTask = nil }
+        return try await withTaskCancellationHandler { try await task.value } onCancel: { task.cancel() }
     }
 
-    private func authorize(existing: ChatGPTCredential?) async throws -> ChatGPTCredential {
+    func signOut() throws {
+        cancelAuthentication()
+        if let accountID = try store.activeAccountID() { try store.delete(accountID: accountID) }
+    }
+
+    func shutdown() {
+        isShuttingDown = true
+        cancelAuthentication()
+    }
+
+    private func cancelAuthentication() {
+        authorizationVersion = UUID()
+        signInTask?.cancel()
+        for task in refreshTasks.values { task.cancel() }
+    }
+
+    private func authorize(existing: ChatGPTCredential?, version: UUID) async throws -> ChatGPTCredential {
+        try Task.checkCancellation()
         let redirectURI = try callbackSession.start()
         guard redirectURI.scheme == "http", redirectURI.host == "127.0.0.1", redirectURI.path == "/auth/callback",
               redirectURI.port != nil, redirectURI.user == nil, redirectURI.password == nil,
@@ -108,12 +130,14 @@ actor ChatGPTOAuthClient {
         }
         let credential = try makeCredential(tokens: tokens, identity: identity, clientID: clientID, hostID: hostID)
         try Task.checkCancellation()
+        guard authorizationVersion == version, !isShuttingDown else { throw CancellationError() }
         try store.save(credential, accountID: credential.accountID)
         try store.select(accountID: credential.accountID)
         return credential
     }
 
     func credential() async throws -> ChatGPTCredential {
+        guard !isShuttingDown else { throw CancellationError() }
         guard let accountID = try store.activeAccountID(), let current = try store.load(accountID: accountID) else {
             throw ChatGPTError.noAccount
         }

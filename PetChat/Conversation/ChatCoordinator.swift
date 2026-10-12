@@ -156,6 +156,17 @@ final class ChatCoordinator {
         try saveResult.get()
     }
 
+    func stopAll(providerID: ProviderID? = nil) async throws {
+        var firstError: Swift.Error?
+        let ids = activeRequests.keys.filter { id in
+            providerID == nil || threads.first(where: { $0.id == id })?.providerID == providerID
+        }
+        for id in ids {
+            do { try await stop(threadID: id) } catch { if firstError == nil { firstError = error } }
+        }
+        if let firstError { throw firstError }
+    }
+
     private func save(_ thread: ChatThread) throws {
         try store.save(thread)
         if let index = threads.firstIndex(where: { $0.id == thread.id }) { threads[index] = thread }

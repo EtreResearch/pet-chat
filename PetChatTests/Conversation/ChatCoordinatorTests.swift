@@ -104,7 +104,7 @@ final class ChatCoordinatorTests: XCTestCase {
     func testAppModelKeepsDraftAndAttachmentAfterProviderError() async throws {
         let fixture = try Fixture()
         fixture.provider.failure = TestFailure.disconnected
-        let model = AppModel(coordinator: fixture.coordinator, defaults: fixture.defaults)
+        let model = AppModel(coordinator: fixture.coordinator, auth: fixture.auth, defaults: fixture.defaults)
         try model.select(providerID: .ollama, modelID: "text")
         let thread = try XCTUnwrap(model.thread)
         let image = try fixture.attachments.save(testPNG(1), threadID: thread.id)
@@ -121,7 +121,7 @@ final class ChatCoordinatorTests: XCTestCase {
 
     func testChangingModelStartsEmptyThread() throws {
         let fixture = try Fixture()
-        let model = AppModel(coordinator: fixture.coordinator, defaults: fixture.defaults)
+        let model = AppModel(coordinator: fixture.coordinator, auth: fixture.auth, defaults: fixture.defaults)
         try model.select(providerID: .ollama, modelID: "text")
         let firstID = try XCTUnwrap(model.thread?.id)
         model.draft = "old question"
@@ -138,7 +138,7 @@ final class ChatCoordinatorTests: XCTestCase {
         let fixture = try Fixture()
         fixture.provider.events = [.textDelta("broken")]
         fixture.provider.failure = TestFailure.disconnected
-        let model = AppModel(coordinator: fixture.coordinator, defaults: fixture.defaults)
+        let model = AppModel(coordinator: fixture.coordinator, auth: fixture.auth, defaults: fixture.defaults)
         try model.select(providerID: .ollama, modelID: "text")
         model.draft = "Question"
         await model.submit()
@@ -192,7 +192,7 @@ final class ChatCoordinatorTests: XCTestCase {
         let started = expectation(description: "stream started")
         fixture.provider.holdOpen = true
         fixture.provider.onStream = { started.fulfill() }
-        let model = AppModel(coordinator: fixture.coordinator, defaults: fixture.defaults)
+        let model = AppModel(coordinator: fixture.coordinator, auth: fixture.auth, defaults: fixture.defaults)
         try model.select(providerID: .ollama, modelID: "text")
         let firstID = model.thread?.id
         model.draft = "Original"
@@ -213,7 +213,7 @@ final class ChatCoordinatorTests: XCTestCase {
         let started = expectation(description: "image stream started")
         fixture.provider.holdOpen = true
         fixture.provider.onStream = { started.fulfill() }
-        let model = AppModel(coordinator: fixture.coordinator, defaults: fixture.defaults)
+        let model = AppModel(coordinator: fixture.coordinator, auth: fixture.auth, defaults: fixture.defaults)
         try model.select(providerID: .ollama, modelID: "text")
         let threadID = try XCTUnwrap(model.currentThreadID)
         model.draft = "Original image question"
@@ -244,7 +244,7 @@ final class ChatCoordinatorTests: XCTestCase {
         let started = expectation(description: "old discovery started")
         fixture.provider.holdModels = true
         fixture.provider.onModels = { started.fulfill() }
-        let model = AppModel(coordinator: fixture.coordinator, defaults: fixture.defaults)
+        let model = AppModel(coordinator: fixture.coordinator, auth: fixture.auth, defaults: fixture.defaults)
         let old = Task { await model.loadModels(for: .ollama) }
         await fulfillment(of: [started], timeout: 2)
 
@@ -257,7 +257,7 @@ final class ChatCoordinatorTests: XCTestCase {
     func testConcisePromptAndTellMeMoreStayInSameChat() async throws {
         let fixture = try Fixture()
         fixture.provider.events = [.textDelta("Short answer"), .completed]
-        let model = AppModel(coordinator: fixture.coordinator, defaults: fixture.defaults)
+        let model = AppModel(coordinator: fixture.coordinator, auth: fixture.auth, defaults: fixture.defaults)
         try model.select(providerID: .ollama, modelID: "text")
         let originalID = model.thread?.id
         model.draft = "Why?"
@@ -291,6 +291,85 @@ final class ChatCoordinatorTests: XCTestCase {
         XCTAssertEqual(model.excludedMessageIDs, [oldUser.id, oldPet.id])
     }
 
+    func testRestartRestoresChatProviderIdentityWithoutDiscovery() throws {
+        let fixture = try Fixture()
+        let original = AppModel(coordinator: fixture.coordinator, auth: fixture.auth, defaults: fixture.defaults)
+        try original.select(providerID: .chatGPT, modelID: "gpt")
+        let restored = AppModel(coordinator: try ChatCoordinator(providers: [.chatGPT: fixture.otherProvider],
+            store: fixture.store, attachments: fixture.attachments), defaults: fixture.defaults)
+        XCTAssertEqual(restored.currentThreadID, original.currentThreadID)
+        XCTAssertEqual(restored.thread?.providerID, .chatGPT)
+        XCTAssertEqual(restored.selectedModelID, "gpt")
+        XCTAssertTrue(fixture.otherProvider.requests.isEmpty)
+    }
+
+    func testShutdownStopsStreamingAndPreservesDraftHistoryAndProvider() async throws {
+        let fixture = try Fixture()
+        fixture.otherProvider.holdOpen = true
+        fixture.otherProvider.events = [.textDelta("Partial")]
+        let started = expectation(description: "stream started")
+        fixture.otherProvider.onStream = { started.fulfill() }
+        let model = AppModel(coordinator: fixture.coordinator, auth: fixture.auth, defaults: fixture.defaults)
+        try model.select(providerID: .chatGPT, modelID: "gpt")
+        model.draft = "Keep my question"
+        let submission = Task { await model.submit() }
+        await fulfillment(of: [started], timeout: 2)
+        await model.shutdown()
+        await submission.value
+        XCTAssertFalse(model.isLoading)
+        XCTAssertTrue(fixture.otherProvider.cancelled)
+        XCTAssertEqual(model.draft, "Keep my question")
+        XCTAssertEqual(model.thread?.providerID, .chatGPT)
+        XCTAssertEqual(model.thread?.messages.last?.status, .stopped)
+        XCTAssertEqual(try fixture.store.load().last?.messages.last?.status, .stopped)
+    }
+
+    func testShutdownDiscardsLateCaptureAndModelDiscovery() async throws {
+        let fixture = try Fixture()
+        let gate = AuthGate()
+        let captureStarted = expectation(description: "capture started")
+        gate.onStart = { captureStarted.fulfill() }
+        let model = AppModel(coordinator: fixture.coordinator, auth: fixture.auth, defaults: fixture.defaults)
+        try model.select(providerID: .ollama, modelID: "text")
+        model.draft = "Keep draft"
+        let capture = Task { await model.captureImage(using: { await gate.wait(); return testPNG() }) }
+        await fulfillment(of: [captureStarted], timeout: 2)
+        fixture.provider.holdModels = true
+        let modelsStarted = expectation(description: "models started")
+        fixture.provider.onModels = { modelsStarted.fulfill() }
+        let discovery = Task { await model.loadModels(for: .ollama) }
+        await fulfillment(of: [modelsStarted], timeout: 2)
+        await model.shutdown()
+        gate.resume()
+        fixture.provider.modelsGate?.resume()
+        await capture.value
+        await discovery.value
+        XCTAssertTrue(model.attachmentIDs.isEmpty)
+        XCTAssertTrue(model.models.isEmpty)
+        XCTAssertEqual(model.draft, "Keep draft")
+        await model.submit()
+        XCTAssertTrue(fixture.provider.requests.isEmpty)
+    }
+
+    func testSignOutInvalidatesPendingConnectWithoutDiscoveryOrDraftLoss() async throws {
+        let fixture = try Fixture()
+        let gate = AuthGate()
+        let started = expectation(description: "connect started")
+        gate.onStart = { started.fulfill() }
+        let model = AppModel(coordinator: fixture.coordinator, auth: fixture.auth, defaults: fixture.defaults, signIn: { await gate.wait() })
+        try model.select(providerID: .chatGPT, modelID: "gpt")
+        model.draft = "Keep draft"
+        let connection = Task { await model.connectChatGPT() }
+        await fulfillment(of: [started], timeout: 2)
+        await model.signOutChatGPT()
+        gate.resume()
+        await connection.value
+        XCTAssertTrue(model.models.isEmpty)
+        XCTAssertEqual(model.draft, "Keep draft")
+        XCTAssertEqual(model.thread?.providerID, .chatGPT)
+        XCTAssertTrue(fixture.otherProvider.requests.isEmpty)
+    }
+
     func testLastSelectedPairSurvivesDeletingFinalChat() throws {
         let fixture = try Fixture()
         let suiteName = "PetChatTests.\(UUID().uuidString)"
@@ -313,7 +392,7 @@ final class ChatCoordinatorTests: XCTestCase {
         let gate = AuthGate()
         let started = expectation(description: "sign-in started")
         gate.onStart = { started.fulfill() }
-        let model = AppModel(coordinator: fixture.coordinator, defaults: fixture.defaults, signIn: { await gate.wait() })
+        let model = AppModel(coordinator: fixture.coordinator, auth: fixture.auth, defaults: fixture.defaults, signIn: { await gate.wait() })
         let connecting = Task { await model.connectChatGPT() }
         await fulfillment(of: [started], timeout: 2)
 
@@ -335,7 +414,7 @@ final class ChatCoordinatorTests: XCTestCase {
 
     func testTellMeMoreDoesNotSubmitPendingImage() async throws {
         let fixture = try Fixture()
-        let model = AppModel(coordinator: fixture.coordinator, defaults: fixture.defaults)
+        let model = AppModel(coordinator: fixture.coordinator, auth: fixture.auth, defaults: fixture.defaults)
         try model.select(providerID: .ollama, modelID: "text")
         model.draft = "Why?"
         await model.submit()
@@ -368,7 +447,7 @@ final class ChatCoordinatorTests: XCTestCase {
 
     func testStopDuringDiscoveryAllowsRetryBeforeOldLookupReturns() async throws {
         let fixture = try Fixture()
-        let model = AppModel(coordinator: fixture.coordinator, defaults: fixture.defaults)
+        let model = AppModel(coordinator: fixture.coordinator, auth: fixture.auth, defaults: fixture.defaults)
         try model.select(providerID: .ollama, modelID: "text")
         model.draft = "Earlier"
         await model.submit()
@@ -394,7 +473,7 @@ final class ChatCoordinatorTests: XCTestCase {
 
     func testPasteCreatesPreviewWithoutSendingAndRemovalDeletesOnlyUnsubmittedImage() throws {
         let fixture = try Fixture()
-        let model = AppModel(coordinator: fixture.coordinator, defaults: fixture.defaults)
+        let model = AppModel(coordinator: fixture.coordinator, auth: fixture.auth, defaults: fixture.defaults)
         try model.select(providerID: .ollama, modelID: "text")
         let pasteboard = NSPasteboard.withUniqueName()
         defer { pasteboard.releaseGlobally() }
@@ -411,7 +490,7 @@ final class ChatCoordinatorTests: XCTestCase {
 
     func testInvalidPastePreservesDraftAndImages() throws {
         let fixture = try Fixture()
-        let model = AppModel(coordinator: fixture.coordinator, defaults: fixture.defaults)
+        let model = AppModel(coordinator: fixture.coordinator, auth: fixture.auth, defaults: fixture.defaults)
         try model.select(providerID: .ollama, modelID: "text")
         try model.attachImage(testPNG())
         let images = model.attachmentIDs
@@ -427,7 +506,7 @@ final class ChatCoordinatorTests: XCTestCase {
     func testRemovingFailedTurnPreviewPreservesHistoricalImage() async throws {
         let fixture = try Fixture()
         fixture.provider.failure = TestFailure.disconnected
-        let model = AppModel(coordinator: fixture.coordinator, defaults: fixture.defaults)
+        let model = AppModel(coordinator: fixture.coordinator, auth: fixture.auth, defaults: fixture.defaults)
         try model.select(providerID: .ollama, modelID: "text")
         try model.attachImage(testPNG())
         let image = try XCTUnwrap(model.attachmentIDs.first)
@@ -440,7 +519,7 @@ final class ChatCoordinatorTests: XCTestCase {
 
     func testImagesClearOnlyAfterSuccessAndNeverResendOnNextTurn() async throws {
         let fixture = try Fixture()
-        let model = AppModel(coordinator: fixture.coordinator, defaults: fixture.defaults)
+        let model = AppModel(coordinator: fixture.coordinator, auth: fixture.auth, defaults: fixture.defaults)
         try model.select(providerID: .ollama, modelID: "text")
         try model.attachImage(testPNG())
         let image = try XCTUnwrap(model.attachmentIDs.first)
@@ -456,7 +535,7 @@ final class ChatCoordinatorTests: XCTestCase {
     func testUnsupportedModelKeepsDraftAndImagesWithoutPersistingTurn() async throws {
         let fixture = try Fixture()
         fixture.provider.supportsImages = false
-        let model = AppModel(coordinator: fixture.coordinator, defaults: fixture.defaults)
+        let model = AppModel(coordinator: fixture.coordinator, auth: fixture.auth, defaults: fixture.defaults)
         try model.select(providerID: .ollama, modelID: "text")
         model.draft = "Look"
         try model.attachImage(testPNG())
@@ -471,7 +550,7 @@ final class ChatCoordinatorTests: XCTestCase {
 
     func testCaptureSuccessAddsPreviewWithoutSubmittingAndCancelKeepsDraft() async throws {
         let fixture = try Fixture()
-        let model = AppModel(coordinator: fixture.coordinator, defaults: fixture.defaults)
+        let model = AppModel(coordinator: fixture.coordinator, auth: fixture.auth, defaults: fixture.defaults)
         try model.select(providerID: .ollama, modelID: "text")
         model.draft = "Keep"
         await model.captureImage(using: { testPNG() })
@@ -488,7 +567,7 @@ final class ChatCoordinatorTests: XCTestCase {
 
     func testLateCaptureCannotReattachAfterSwitchingAwayAndBack() async throws {
         let fixture = try Fixture()
-        let model = AppModel(coordinator: fixture.coordinator, defaults: fixture.defaults)
+        let model = AppModel(coordinator: fixture.coordinator, auth: fixture.auth, defaults: fixture.defaults)
         try model.select(providerID: .ollama, modelID: "text")
         let originalID = model.currentThreadID
         let gate = AuthGate()
@@ -508,7 +587,7 @@ final class ChatCoordinatorTests: XCTestCase {
     func testLateCaptureAfterThreadOrProviderChangeIsDiscarded() async throws {
         for changeProvider in [false, true] {
             let fixture = try Fixture()
-            let model = AppModel(coordinator: fixture.coordinator, defaults: fixture.defaults)
+            let model = AppModel(coordinator: fixture.coordinator, auth: fixture.auth, defaults: fixture.defaults)
             try model.select(providerID: .ollama, modelID: "text")
             let gate = AuthGate()
             let started = expectation(description: "capture started")
@@ -563,6 +642,7 @@ private final class Fixture {
     let defaults = UserDefaults(suiteName: UUID().uuidString)!
     let attachments: AttachmentStore
     let store: LocalChatStore
+    let auth = ChatGPTOAuthClient(store: KeychainCredentialStore(service: "com.etre.pet-chat.coordinator-tests.\(UUID())"))
     let provider = ScriptedProvider(id: .ollama)
     let otherProvider = ScriptedProvider(id: .chatGPT)
     let snapshots = SnapshotBox()
