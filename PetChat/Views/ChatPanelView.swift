@@ -4,6 +4,7 @@ struct ChatPanelView: View {
     @Bindable var model: AppModel
     let onClose: () -> Void
     let onChangeModel: () -> Void
+    @ScaledMetric(relativeTo: .body) private var textSize = 13
 
     var body: some View {
         VStack(spacing: 0) {
@@ -56,7 +57,7 @@ struct ChatPanelView: View {
             }
             if let error = model.errorMessage {
                 HStack {
-                    Text(error).font(.caption).foregroundStyle(.red)
+                    Text(error).font(.caption).foregroundStyle(.primary)
                     Spacer()
                     Button("Retry") { Task { await model.retry() } }
                     if model.selectedProviderID == .chatGPT {
@@ -72,6 +73,7 @@ struct ChatPanelView: View {
             Divider()
             ComposerView(model: model)
         }
+        .font(.system(size: textSize))
         .frame(width: 340, height: 420)
         .task(id: model.thread?.id) { await model.loadModels(for: model.selectedProviderID) }
     }

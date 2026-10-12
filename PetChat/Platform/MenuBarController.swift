@@ -15,6 +15,7 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         super.init()
         statusItem.button?.image = NSImage(systemSymbolName: "cat", accessibilityDescription: "Pet Chat")
         statusItem.button?.setAccessibilityLabel("Pet Chat")
+        statusItem.button?.setAccessibilityHelp("Show or hide the pet, open Settings, or quit Pet Chat.")
         for (title, action) in [("Hide Pet", #selector(togglePet)), ("Settings…", #selector(settings))] {
             let item = menu.addItem(withTitle: title, action: action, keyEquivalent: "")
             item.target = self

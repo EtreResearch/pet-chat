@@ -5,6 +5,22 @@ import XCTest
 
 @MainActor
 final class RegionCaptureTests: XCTestCase {
+    func testCancellingSelectionClosesOverlaysWithoutCapturing() async throws {
+        let pending = Task { await RegionSelectionOverlay.selectRegion() }
+        try await Task.sleep(for: .milliseconds(100))
+        XCTAssertTrue(NSApp.windows.contains { $0.isVisible && $0.contentView is RegionSelectionOverlay })
+        pending.cancel()
+        try await Task.sleep(for: .milliseconds(150))
+        let remainsVisible = NSApp.windows.contains { $0.isVisible && $0.contentView is RegionSelectionOverlay }
+        // Always close the test overlay, including on the RED run.
+        if remainsVisible {
+            for window in NSApp.windows { (window.contentView as? RegionSelectionOverlay)?.cancelOperation(nil) }
+        }
+        let result = await pending.value
+        XCTAssertNil(result)
+        XCTAssertFalse(remainsVisible)
+    }
+
     func testRetinaUsesLogicalTopLeftSourceRectAndScalesOnlyOutput() throws {
         let selection = RegionSelection(displayID: 1,
             displayFrame: CGRect(x: -1440, y: -200, width: 1440, height: 900),

@@ -5,6 +5,7 @@ import Observation
 @MainActor @Observable
 final class AppModel {
     let coordinator: ChatCoordinator
+    let loginItemController: LoginItemController
     private let defaults: UserDefaults
     private let auth: ChatGPTOAuthClient
     private var isShuttingDown = false
@@ -38,6 +39,7 @@ final class AppModel {
         self.coordinator = coordinator
         self.auth = auth
         self.defaults = defaults
+        loginItemController = LoginItemController(defaults: defaults)
         self.signIn = signIn ?? { _ = try await auth.signIn() }
         if let last = coordinator.threads.last {
             currentThreadID = last.id

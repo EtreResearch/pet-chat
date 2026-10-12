@@ -32,7 +32,7 @@ struct MessageRowView: View {
         }
         .padding(8)
         .frame(maxWidth: .infinity, alignment: message.role == .user ? .trailing : .leading)
-        .background(message.role == .user ? Color.blue.opacity(0.12) : Color.gray.opacity(0.12))
+        .background(message.role == .user ? Color(nsColor: .controlBackgroundColor) : Color(nsColor: .textBackgroundColor))
         .clipShape(RoundedRectangle(cornerRadius: 10))
         .accessibilityElement(children: .combine)
     }

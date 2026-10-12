@@ -1,6 +1,7 @@
 import AppKit
 import Carbon
 import SwiftUI
+import ServiceManagement
 
 struct SettingsView: View {
     let shortcutController: GlobalShortcutController
@@ -20,36 +21,85 @@ struct SettingsView: View {
     }
 
     var body: some View {
-        Form {
-            HStack {
-                Text("Open chat")
-                Spacer()
-                ShortcutRecorder(shortcut: shortcut) { candidate in
-                    do {
-                        try shortcutController.register(candidate)
-                        shortcut = candidate
-                        error = nil
-                    } catch { self.error = error.localizedDescription }
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                LoginItemControl(controller: panelController.model.loginItemController)
+                Divider()
+                HStack {
+                    Text("Open chat")
+                    Spacer()
+                    ShortcutRecorder(shortcut: shortcut) { candidate in
+                        do {
+                            try shortcutController.register(candidate)
+                            shortcut = candidate
+                            error = nil
+                        } catch { self.error = error.localizedDescription }
+                    }
+                    .frame(width: 170, height: 28)
                 }
-                .frame(width: 170, height: 28)
-            }
-            Text("Click the shortcut, then press a new combination. Escape cancels.")
-                .font(.caption).foregroundStyle(.secondary)
-            if let error { Text(error).foregroundStyle(.red).accessibilityLabel(error) }
-            Picker("Pet display", selection: $displayID) {
-                ForEach(displays) { display in
-                    Text(display.name).tag(display.id)
+                Text("Click the shortcut, then press a new combination. Escape cancels.")
+                    .font(.caption).foregroundStyle(.secondary)
+                if let error { Text(error).foregroundStyle(.primary).accessibilityLabel(error) }
+                Picker("Pet display", selection: $displayID) {
+                    ForEach(displays) { display in
+                        Text(display.name).tag(display.id)
+                    }
                 }
+                .accessibilityLabel("Pet display")
+                .onChange(of: displayID) { _, id in panelController.repositionPet(for: id) }
+                Divider()
+                Text("Current chat: \(panelController.model.selectedProviderID == .ollama ? "Ollama" : "ChatGPT") · \(panelController.model.selectedModelID)")
+                    .textSelection(.enabled)
+                Text("Use Chat → Change model to choose a provider and model for a new chat.")
+                    .font(.caption)
+                Button("Sign out of ChatGPT") { Task { await panelController.model.signOutChatGPT() } }
+                    .accessibilityHint("Removes this app’s active ChatGPT credential. Keeps local chats, drafts, and Ollama settings.")
+                if let message = panelController.model.errorMessage { Text(message).foregroundStyle(.primary) }
+                Divider()
+                Text("Images are sent only when you press Send. Capture area asks for Screen Recording permission; Paste image does not need it.")
+                    .font(.caption)
+                Text(RegionCaptureController.Error.permissionDenied.localizedDescription).font(.caption)
+                Button("Screen Recording Settings") {
+                    NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture")!)
+                }
+                Text("Pet animations follow macOS Reduce Motion. Text and controls use your system appearance and accessibility settings.")
+                    .font(.caption)
             }
-            .onChange(of: displayID) { _, id in panelController.repositionPet(for: id) }
+            .padding(20)
         }
-        .padding(20)
-        .frame(width: 400)
+        .frame(width: 440)
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didChangeScreenParametersNotification)
             .receive(on: RunLoop.main)) { _ in
                 displays = panelController.displays
                 displayID = panelController.selectedDisplayID ?? 0
             }
+    }
+}
+
+struct LoginItemControl: View {
+    @Bindable var controller: LoginItemController
+    @State private var error: String?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Toggle("Launch at login", isOn: Binding(get: { controller.optedIn }, set: { enabled in
+                do { try controller.setEnabled(enabled); error = nil }
+                catch { self.error = error.localizedDescription }
+            }))
+            .accessibilityLabel("Launch at login")
+            .accessibilityHint("Optional. Starts Pet Chat when you sign in to your Mac.")
+            if controller.requiresApproval {
+                Text("Allow Pet Chat in System Settings → General → Login Items to finish enabling launch at login.")
+                    .font(.caption)
+                Button("Open Login Items Settings") { SMAppService.openSystemSettingsLoginItems() }
+            } else if controller.optedIn && !controller.isEnabled {
+                Text("Launch at login is unavailable. Turn it off and on to retry registration.").font(.caption)
+            }
+            if let error { Text(error).font(.caption).foregroundStyle(.primary) }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            controller.refreshStatus()
+        }
     }
 }
 

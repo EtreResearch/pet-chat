@@ -43,7 +43,7 @@ final class ChatFloatingPanel: NSPanel {
 final class PetPanelController: NSObject {
     let petPanel: NSPanel
     let chatPanel: ChatFloatingPanel
-    private let model: AppModel
+    let model: AppModel
     private let defaults: UserDefaults
     private let displayProvider: () -> [PetDisplay]
     private let fullScreenProvider: (CGDirectDisplayID?) -> Bool

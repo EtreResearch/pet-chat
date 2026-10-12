@@ -6,6 +6,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private(set) var panelController: PetPanelController?
     private var shortcutController: GlobalShortcutController?
     private var menuBarController: MenuBarController?
+    private var model: AppModel?
     private var settingsWindow: NSWindow?
     private var shortcutRegistrationError: String?
 
@@ -29,6 +30,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func startDesktop(model: AppModel, defaults: UserDefaults = .standard) {
         guard panelController == nil else { return }
+        self.model = model
         let panel = PetPanelController(model: model, defaults: defaults)
         panelController = panel
         let shortcut = GlobalShortcutController(defaults: defaults, onSummon: { [weak panel] in panel?.showChat() })
@@ -44,7 +46,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func showSettings() {
         guard let shortcutController, let panelController else { return }
         if settingsWindow == nil {
-            let window = NSWindow(contentRect: CGRect(x: 0, y: 0, width: 440, height: 230),
+            let window = NSWindow(contentRect: CGRect(x: 0, y: 0, width: 440, height: 620),
                                   styleMask: [.titled, .closable], backing: .buffered, defer: false)
             window.isReleasedWhenClosed = false
             window.title = "Pet Chat Settings"
@@ -56,6 +58,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         NSApp.activate(ignoringOtherApps: true)
         settingsWindow?.makeKeyAndOrderFront(nil)
+    }
+
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        guard let model else { return .terminateNow }
+        panelController?.hidePet()
+        Task {
+            await model.shutdown()
+            sender.reply(toApplicationShouldTerminate: true)
+        }
+        return .terminateLater
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }

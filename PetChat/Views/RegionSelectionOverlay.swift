@@ -46,37 +46,46 @@ final class RegionSelectionOverlay: NSView {
     }
 
     static func selectRegion() async -> RegionSelection? {
-        await withCheckedContinuation { continuation in
-            var panels: [SelectionPanel] = []
-            var finished = false
-            for screen in NSScreen.screens {
-                guard let id = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? UInt32 else { continue }
-                let panel = SelectionPanel(contentRect: screen.frame, styleMask: .borderless, backing: .buffered, defer: false)
-                panel.isReleasedWhenClosed = false
-                panel.level = .screenSaver
-                panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
-                panel.backgroundColor = .clear
-                panel.isOpaque = false
-                let overlay = RegionSelectionOverlay(frame: CGRect(origin: .zero, size: screen.frame.size))
-                overlay.setAccessibilityLabel("Select capture area. Drag within a display. Escape cancels.")
-                overlay.onSelection = { rect in
-                    guard !finished else { return }
-                    finished = true
-                    let result = rect.map { RegionSelection(displayID: id, displayFrame: screen.frame,
-                                                            rect: panel.convertToScreen($0)) }
-                    for panel in panels { panel.orderOut(nil); panel.contentView = nil; panel.close() }
-                    panels.removeAll()
-                    continuation.resume(returning: result)
+        await withTaskCancellationHandler {
+            guard !Task.isCancelled else { return nil }
+            return await withCheckedContinuation { continuation in
+                var panels: [SelectionPanel] = []
+                var finished = false
+                for screen in NSScreen.screens {
+                    guard let id = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? UInt32 else { continue }
+                    let panel = SelectionPanel(contentRect: screen.frame, styleMask: .borderless, backing: .buffered, defer: false)
+                    panel.isReleasedWhenClosed = false
+                    panel.level = .screenSaver
+                    panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+                    panel.backgroundColor = .clear
+                    panel.isOpaque = false
+                    let overlay = RegionSelectionOverlay(frame: CGRect(origin: .zero, size: screen.frame.size))
+                    overlay.setAccessibilityLabel("Select capture area. Drag within a display. Escape cancels.")
+                    overlay.onSelection = { rect in
+                        guard !finished else { return }
+                        finished = true
+                        let result = rect.map { RegionSelection(displayID: id, displayFrame: screen.frame,
+                                                                rect: panel.convertToScreen($0)) }
+                        for panel in panels { panel.orderOut(nil); panel.contentView = nil; panel.close() }
+                        panels.removeAll()
+                        continuation.resume(returning: result)
+                    }
+                    panel.contentView = overlay
+                    panels.append(panel)
+                    panel.orderFrontRegardless()
+                    panel.makeFirstResponder(overlay)
                 }
-                panel.contentView = overlay
-                panels.append(panel)
-                panel.orderFrontRegardless()
-                panel.makeFirstResponder(overlay)
+                guard !panels.isEmpty else { continuation.resume(returning: nil); return }
+                let mouse = NSEvent.mouseLocation
+                let active = panels.first(where: { $0.frame.contains(mouse) }) ?? panels[0]
+                active.makeKeyAndOrderFront(nil)
             }
-            guard !panels.isEmpty else { continuation.resume(returning: nil); return }
-            let mouse = NSEvent.mouseLocation
-            let active = panels.first(where: { $0.frame.contains(mouse) }) ?? panels[0]
-            active.makeKeyAndOrderFront(nil)
+        } onCancel: {
+            Task { @MainActor in
+                for window in NSApp.windows {
+                    (window.contentView as? RegionSelectionOverlay)?.cancelOperation(nil)
+                }
+            }
         }
     }
 }

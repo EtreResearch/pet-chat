@@ -13,7 +13,7 @@ final class RegionCaptureController {
         case permissionDenied, invalidSelection, displayUnavailable, encodingFailed
         var errorDescription: String? {
             switch self {
-            case .permissionDenied: "Allow Screen Recording for Pet Chat in System Settings, then try Capture area again."
+            case .permissionDenied: "Allow Pet Chat in System Settings → Privacy & Security → Screen Recording. If macOS asks, quit and reopen Pet Chat, then try Capture area again."
             case .invalidSelection: "Drag to select an area within one display."
             case .displayUnavailable: "The selected display is unavailable. Try Capture area again."
             case .encodingFailed: "The screenshot could not be saved. Try again."

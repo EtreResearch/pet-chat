@@ -40,6 +40,72 @@ final class ChatAccessibilityTests: XCTestCase {
         }
     }
 
+    func testSetupExposesLoginConsentAndPrivacyExplanationAtLargeTextSize() async throws {
+        let model = try makeSettingsModel()
+        let host = NSHostingView(rootView: SetupView(model: model, onSelected: {})
+            .dynamicTypeSize(.accessibility1))
+        host.frame = CGRect(x: 0, y: 0, width: 340, height: 420)
+        let window = show(host)
+        defer { window.contentView = nil; window.close() }
+        try await Task.sleep(for: .milliseconds(150))
+        let labels = accessibilityLabels(in: AXUIElementCreateApplication(getpid()))
+        for label in ["Provider", "Model", "Launch at login", "Start chatting"] {
+            XCTAssertTrue(labels.contains(label), "Missing accessible \(label): \(labels)")
+        }
+        XCTAssertTrue(labels.contains { $0.contains("Send") && $0.localizedCaseInsensitiveContains("image") })
+    }
+
+    func testSettingsExposesSavedProviderSignOutAndPermissionRecovery() async throws {
+        let model = try makeSettingsModel()
+        try model.select(providerID: .ollama, modelID: "test")
+        let panel = PetPanelController(model: model, defaults: UserDefaults(suiteName: UUID().uuidString)!,
+            fullScreenProvider: { _ in false })
+        defer { panel.hidePet() }
+        let shortcuts = GlobalShortcutController(defaults: UserDefaults(suiteName: UUID().uuidString)!, onSummon: {})
+        let host = NSHostingView(rootView: SettingsView(shortcutController: shortcuts, panelController: panel))
+        host.frame = CGRect(x: 0, y: 0, width: 440, height: 620)
+        let window = show(host)
+        defer { window.contentView = nil; window.close() }
+        try await Task.sleep(for: .milliseconds(150))
+        let labels = accessibilityLabels(in: AXUIElementCreateApplication(getpid()))
+        for label in ["Launch at login", "Sign out of ChatGPT", "Open chat shortcut", "Pet display"] {
+            XCTAssertTrue(labels.contains(label), "Missing accessible \(label): \(labels)")
+        }
+        XCTAssertTrue(labels.contains { $0.contains("Screen Recording") && $0.contains("System Settings") })
+        XCTAssertTrue(labels.contains { $0.contains("Ollama") && $0.contains("test") })
+    }
+
+    func testThinkingPetKeepsAccessibleNameAndCompactSize() async throws {
+        let host = NSHostingView(rootView: PetCharacterView(isThinking: true))
+        host.frame = CGRect(x: 0, y: 0, width: 64, height: 64)
+        let window = show(host)
+        defer { window.contentView = nil; window.close() }
+        try await Task.sleep(for: .milliseconds(100))
+        XCTAssertTrue(accessibilityLabels(in: AXUIElementCreateApplication(getpid())).contains("Pet, thinking"))
+        XCTAssertEqual(host.fittingSize.width, 64, accuracy: 1)
+        XCTAssertEqual(host.fittingSize.height, 64, accuracy: 1)
+    }
+
+    private func makeSettingsModel() throws -> AppModel {
+        let attachments = AttachmentStore(root: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString))
+        let container = try ModelContainer(for: ChatRecord.self, MessageRecord.self,
+            configurations: ModelConfiguration(isStoredInMemoryOnly: true))
+        let coordinator = try ChatCoordinator(providers: [.ollama: AccessibilityProvider()],
+            store: LocalChatStore(container: container, attachments: attachments), attachments: attachments)
+        return AppModel(coordinator: coordinator,
+            auth: ChatGPTOAuthClient(store: KeychainCredentialStore(service: "com.etre.pet-chat.accessibility-tests.\(UUID())")),
+            defaults: UserDefaults(suiteName: UUID().uuidString)!)
+    }
+
+    private func show(_ host: NSView) -> NSWindow {
+        let window = NSWindow(contentRect: host.frame, styleMask: .titled, backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = host
+        window.makeKeyAndOrderFront(nil)
+        host.layoutSubtreeIfNeeded()
+        return window
+    }
+
     func testStreamingReplyDoesNotAnnounceInterrupted() {
         let row = NSHostingView(rootView: MessageRowView(
             message: ChatMessage(role: .pet, text: "Partial", status: .failed),
@@ -60,7 +126,7 @@ final class ChatAccessibilityTests: XCTestCase {
     private func accessibilityLabels(in element: AXUIElement, depth: Int = 0) -> [String] {
         guard depth < 20 else { return [] }
         var labels: [String] = []
-        for attribute in [kAXTitleAttribute, kAXDescriptionAttribute] {
+        for attribute in [kAXTitleAttribute, kAXDescriptionAttribute, kAXValueAttribute] {
             var value: CFTypeRef?
             if AXUIElementCopyAttributeValue(element, attribute as CFString, &value) == .success,
                let text = value as? String { labels.append(text) }
