@@ -184,13 +184,15 @@
 - `GlobalShortcutController.register(_ shortcut: Shortcut) throws` reports a registration conflict; default is Control–Option–Space and Settings permits a replacement.
 - `MenuBarController` exposes Show/Hide, Settings, and Quit. Pet drag position is stored by display ID and clamped into that display's visible frame.
 
-- [ ] **Step 1: Add failing position tests** for clamping near all four screen edges and a removed display; add a shortcut conflict test.
-- [ ] **Step 2: Add UI checks** for the 64-point pet, panel opening/focus, Escape preserving draft, and close behavior.
-- [ ] **Step 3: Run the platform tests and confirm failure before implementation.**
-- [ ] **Step 4: Implement an accessory app with an AppKit floating panel, approved panel dimensions, persisted draggable position, menu-bar controls, configurable Carbon hotkey, and selected-display recovery.**
-- [ ] **Step 5: Create one transparent cat asset from the approved concept. Animate occasional idle blink, subtle breathing while idle, a reduced-motion-safe thinking state, and a brief completion reaction. Keep sound disabled.**
+- [x] **Step 1: Add failing position tests** for clamping near all four screen edges and a removed display; add a shortcut conflict test.
+- [x] **Step 2: Add UI checks** for the 64-point pet, panel opening/focus, Escape preserving draft, and close behavior.
+- [x] **Step 3: Run the platform tests and confirm failure before implementation.**
+- [x] **Step 4: Implement an accessory app with an AppKit floating panel, approved panel dimensions, persisted draggable position, menu-bar controls, configurable Carbon hotkey, and selected-display recovery.**
+- [x] **Step 5: Create one transparent cat asset from the approved concept. Animate occasional idle blink, subtle breathing while idle, a reduced-motion-safe thinking state, and a brief completion reaction. Keep sound disabled.**
 - [ ] **Step 6: Rerun platform/UI checks on the Mac; manually exercise drag, focus ownership, hotkey conflict, screen edges, display disconnect, and Reduce Motion.**
-- [ ] **Step 7: Commit** `feat: add floating animated pet and menu controls`.
+- [x] **Step 7: Commit** `feat: add floating animated pet and menu controls`.
+
+Automated platform checks passed 93/93 after independent review. Offscreen cat/chat previews were inspected. Physical drag, app-switch focus, fullscreen spaces, display disconnect, and Reduce Motion remain manual checks; computer-use permission is unavailable. The transparent cat uses native vector drawing.
 
 ### Task 8: Add explicit screen-region capture and safe image submission
 
@@ -200,15 +202,17 @@
 - Create `PetChatTests/Platform/RegionCaptureTests.swift`.
 - Extend `PetChatTests/Conversation/ChatCoordinatorTests.swift`.
 - Extend `PetChatUITests/PetPanelUITests.swift`.
+- Modify `PetChat/App/AppModel.swift`, composer/message views, panel integration, and `AttachmentStore` as needed for explicit paste, previews, removal, and attachment ownership.
 
 **Interfaces:**
 - `RegionCaptureController.captureRegion() async throws -> Data?` returns PNG bytes after a successful selection, `nil` on Escape, or a permission/provider error.
-- `RegionSelectionOverlay` yields a rectangle in the selected display's coordinates. Convert using display scale before asking ScreenCaptureKit for a single-frame capture. Hide the pet and chat before selection/capture and restore the chat with preview on success.
+- `RegionSelectionOverlay` yields a rectangle for the selected display. Convert AppKit global coordinates to display-local top-left logical points for `SCStreamConfiguration.sourceRect`; apply `SCContentFilter.pointPixelScale` only to output pixel dimensions. Check the SDK contract to avoid double scaling on Retina displays. Hide the pet and chat before selection/capture, exclude this app's windows from the screenshot, and restore the chat on success, cancel, or error.
+- Explicit clipboard image paste and Capture area both create removable previews. Ordinary text paste remains native. Validate image bytes before storing. Selection/paste never submits; Send attaches images only to that user turn. Capture results must not move to another thread/provider when asynchronous state changes. Removing a draft preview must never delete an image already referenced by a submitted message.
 
-- [ ] **Step 1: Add failing tests** for Escape cancellation, denied screen permission, invalid/empty selection, Retina scale conversion, selected-display bounds, and preview retention until Send.
+- [ ] **Step 1: Add failing tests** for Escape cancellation, denied screen permission, invalid/empty selection, Retina scale conversion, selected-display bounds (including negative origins and Y-axis conversion), preview retention until Send, image paste/removal, failed-send retention, and late capture results after a thread/provider change.
 - [ ] **Step 2: Run capture/coordinator/UI tests and confirm they fail.**
-- [ ] **Step 3: Implement the ScreenCaptureKit picker and region capture** with the required `NSScreenCaptureUsageDescription` and attach the resulting PNG only to the current user's message.
-- [ ] **Step 4: Rerun tests and manually verify first-use permission, selection, cancel, preview, attachment persistence, and a vision-model question.**
+- [ ] **Step 3: Implement the ScreenCaptureKit picker and region capture** using macOS 14 APIs with the required `NSScreenCaptureUsageDescription`; wire clipboard image paste, removable image previews, and attachment persistence into the composer. Attach image bytes only to the current user's submitted message. Never request screen access or capture at startup/idle.
+- [ ] **Step 4: Rerun automated tests; where interactive access/account/model are available, manually verify first-use permission, selection, cancel, preview, attachment persistence, and a vision-model question.**
 - [ ] **Step 5: Commit** `feat: capture and attach explicit screen regions`.
 
 ### Task 9: Add first-run settings, login launch, recovery, and accessibility details
