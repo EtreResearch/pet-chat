@@ -226,7 +226,7 @@ Automated coverage passed 114/114 after review and one fix round. Local ad-hoc s
 - Modify `PetChat/Platform/MenuBarController.swift`.
 - Create `PetChatTests/Platform/LoginItemControllerTests.swift`.
 - Extend `PetChatTests/Views/ChatAccessibilityTests.swift`.
-- Extend `PetChatUITests/PetPanelUITests.swift`.
+- Verify setup/settings controls with native accessibility tests here; Task 10 adds their deterministic UI coverage using isolated launch fixtures.
 
 **Interfaces:**
 - `LoginItemController.isEnabled: Bool` and `setEnabled(_ enabled: Bool) throws` use `SMAppService.mainApp`.
