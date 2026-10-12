@@ -1,5 +1,6 @@
 import Foundation
 import Security
+import SwiftData
 import XCTest
 @testable import PetChat
 
@@ -50,7 +51,7 @@ final class OpenAIPlanProviderTests: XCTestCase {
             XCTAssertEqual(content[0]["text"] as? String, "Look")
             XCTAssertEqual(content[1]["type"] as? String, "input_image")
             XCTAssertTrue(content[1]["image_url"] as? String == "data:image/png;base64,\(Data([137,80,78,71,13,10,26,10,1]).base64EncodedString())")
-            return (200, Data("data: {\"type\":\"response.output_text.delta\",\"delta\":\"Hi\"}\n\ndata: {\"type\":\"response.output_text.delta\",\"delta\":\" there\"}\n\ndata: {\"type\":\"response.completed\"}\n\n".utf8))
+            return (200, Self.sse([Self.created, Self.delta("Hi", sequence: 1), Self.delta(" there", sequence: 2), Self.completed("Hi there", sequence: 3)]))
         }
         let request = GenerationRequest(id: UUID(), modelID: "vision", messages: [
             PromptMessage(role: .user, text: "Earlier", attachmentIDs: [old]),
@@ -80,28 +81,123 @@ final class OpenAIPlanProviderTests: XCTestCase {
     }
 
     func testFailedIncompleteAndTruncatedStreamsNeverComplete() async throws {
-        for suffix in ["data: {\"type\":\"response.failed\",\"response\":{\"error\":{\"code\":\"usage_limit\"}}}\n\n",
-                       "data: {\"type\":\"response.incomplete\"}\n\n", ""] {
-            let provider = try makeProvider()
-            FakePlanURLProtocol.handler = { request in
-                if request.url?.path == "/v1/models" { return (200, Self.models) }
-                return (200, Data(("data: {\"type\":\"response.output_text.delta\",\"delta\":\"partial\"}\n\n" + suffix).utf8))
-            }
-            let request = GenerationRequest(id: UUID(), modelID: "text", messages: [PromptMessage(role: .user, text: "Hi", attachmentIDs: [])], imageData: [:])
-            var completed = false
-            do {
-                for try await event in provider.stream(request) { if case .completed = event { completed = true } }
-                XCTFail("Expected stream failure")
-            } catch { XCTAssertFalse(error.localizedDescription.contains("synthetic-access")) }
-            XCTAssertFalse(completed)
+        for suffix in [#"{"type":"response.failed","sequence_number":2,"response":{"id":"resp_test","object":"response","status":"failed","error":{"code":"usage_limit"}}}"#,
+                       #"{"type":"response.incomplete","sequence_number":2,"response":{"id":"resp_test","object":"response","status":"incomplete"}}"#, ""] {
+            try await assertRejected([Self.created, Self.delta("partial", sequence: 1)] + (suffix.isEmpty ? [] : [suffix]))
         }
+    }
+
+    func testRejectsDuplicateDecreasingMissingAndNegativeSequences() async throws {
+        for second in [Self.delta("second", sequence: 1), Self.delta("second", sequence: 0),
+                       #"{"type":"response.output_text.delta","delta":"second"}"#,
+                       Self.delta("second", sequence: -1)] {
+            try await assertRejected([Self.created, Self.delta("partial", sequence: 1), second,
+                                      Self.completed("partialsecond", sequence: 3)])
+        }
+    }
+
+    func testRejectsMalformedInconsistentAndTruncatedCompletion() async throws {
+        for terminal in [#"{"type":"response.completed","sequence_number":2}"#,
+                         Self.completed("partial", sequence: 2).replacingOccurrences(of: "completed", with: "in_progress", options: [], range: nil).replacingOccurrences(of: "response.in_progress", with: "response.completed"),
+                         Self.completed("partial", sequence: 2).replacingOccurrences(of: "resp_test", with: "resp_other"),
+                         Self.completed("partial", sequence: 2).replacingOccurrences(of: #""object":"response""#, with: #""object":"other""#),
+                         Self.completed("partial", sequence: 2).replacingOccurrences(of: #""output":["#, with: #""missing_output":["#),
+                         Self.completed("partial", sequence: 2).replacingOccurrences(of: #""id":"resp_test""#, with: #""id":"""#)] {
+            try await assertRejected([Self.created, Self.delta("partial", sequence: 1), terminal])
+        }
+        try await assertRejected([Self.created, Self.completed("", sequence: 1)])
+    }
+
+    @MainActor
+    func testRefusalDeltasAndFinalTextPersistOnceAndClearDraft() async throws {
+        for deltas in [true, false] {
+            let refusal = "I can’t help with that request."
+            var events = [Self.created]
+            if deltas { events += [Self.delta("I can’t help ", sequence: 1, refusal: true), Self.delta("with that request.", sequence: 2, refusal: true)] }
+            events += [#"{"type":"response.refusal.done","item_id":"msg_test","output_index":0,"content_index":0,"refusal":"I can’t help with that request.","sequence_number":3}"#,
+                       Self.completed(refusal, sequence: 4, refusal: true)]
+            try await withAppModel(events: events) { model, store in
+                model.draft = "Question"
+                await model.submit()
+                XCTAssertEqual(model.thread?.messages.last?.text, refusal)
+                XCTAssertEqual(model.thread?.messages.last?.status, .complete)
+                XCTAssertEqual(try store.load().first?.messages.last?.text, refusal)
+                XCTAssertTrue(model.draft.isEmpty)
+                XCTAssertNil(model.errorMessage)
+            }
+        }
+    }
+
+    @MainActor
+    func testInvalidTerminalKeepsPartialTranscriptFailedAndDraftRetryable() async throws {
+        try await withAppModel(events: [Self.created, Self.delta("partial", sequence: 1), #"{"type":"response.completed","sequence_number":2}"#]) { model, store in
+            model.draft = "Keep my question"
+            await model.submit()
+            XCTAssertEqual(model.thread?.messages.last?.text, "partial")
+            XCTAssertEqual(model.thread?.messages.last?.status, .failed)
+            XCTAssertEqual(try store.load().first?.messages.last?.status, .failed)
+            XCTAssertEqual(model.draft, "Keep my question")
+            XCTAssertNotNil(model.errorMessage)
+            XCTAssertFalse(model.isLoading)
+        }
+    }
+
+    private func assertRejected(_ events: [String]) async throws {
+        let provider = try makeProvider()
+        FakePlanURLProtocol.handler = { request in
+            (200, request.url?.path == "/v1/models" ? Self.models : Self.sse(events))
+        }
+        let request = GenerationRequest(id: UUID(), modelID: "text", messages: [PromptMessage(role: .user, text: "Hi", attachmentIDs: [])], imageData: [:])
+        var completed = false
+        do {
+            for try await event in provider.stream(request) { if case .completed = event { completed = true } }
+            XCTFail("Expected stream failure: \(events)")
+        } catch { XCTAssertFalse(error.localizedDescription.contains("synthetic-access")) }
+        XCTAssertFalse(completed)
+    }
+
+    @MainActor
+    private func withAppModel(events: [String], check: @MainActor (AppModel, LocalChatStore) async throws -> Void) async throws {
+        let provider = try makeProvider()
+        FakePlanURLProtocol.handler = { request in
+            (200, request.url?.path == "/v1/models" ? Self.models : Self.sse(events))
+        }
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let suite = "PetChat.PlanTests.\(UUID())"
+        defer { try? FileManager.default.removeItem(at: root); UserDefaults().removePersistentDomain(forName: suite) }
+        let attachments = AttachmentStore(root: root)
+        let container = try ModelContainer(for: ChatRecord.self, MessageRecord.self, configurations: ModelConfiguration(isStoredInMemoryOnly: true))
+        let store = try LocalChatStore(container: container, attachments: attachments)
+        let coordinator = try ChatCoordinator(providers: [.chatGPT: provider], store: store, attachments: attachments)
+        let model = AppModel(coordinator: coordinator, defaults: UserDefaults(suiteName: suite)!)
+        try model.select(providerID: .chatGPT, modelID: "text")
+        try await check(model, store)
+    }
+
+    private static func sse(_ events: [String]) -> Data {
+        Data(events.map { "data: " + $0 + "\n\n" }.joined().utf8)
+    }
+
+    private static let created = #"{"type":"response.created","sequence_number":0,"response":{"id":"resp_test","object":"response","status":"in_progress","error":null,"output":[]}}"#
+
+    private static func delta(_ text: String, sequence: Int, refusal: Bool = false) -> String {
+        String(data: try! JSONSerialization.data(withJSONObject: ["type": refusal ? "response.refusal.delta" : "response.output_text.delta", "delta": text, "item_id": "msg_test", "output_index": 0, "content_index": 0, "sequence_number": sequence]), encoding: .utf8)!
+    }
+
+    private static func completed(_ text: String, sequence: Int, refusal: Bool = false) -> String {
+        // Response lifecycle and output fields follow the official Responses streaming examples.
+        #"{"type":"response.completed","sequence_number":SEQUENCE,"response":{"id":"resp_test","object":"response","status":"completed","error":null,"incomplete_details":null,"model":"text","output":[{"id":"msg_test","type":"message","role":"assistant","status":"completed","content":[{"type":"TYPE","KEY":TEXT,"annotations":[]}]}]}}"#
+            .replacingOccurrences(of: "SEQUENCE", with: String(sequence))
+            .replacingOccurrences(of: "TYPE", with: refusal ? "refusal" : "output_text")
+            .replacingOccurrences(of: "KEY", with: refusal ? "refusal" : "text")
+            .replacingOccurrences(of: "TEXT", with: String(data: try! JSONEncoder().encode(text), encoding: .utf8)!)
     }
 
     func testUsageLimitEventOffersRecoverableStatus() async throws {
         let provider = try makeProvider()
         FakePlanURLProtocol.handler = { request in
             if request.url?.path == "/v1/models" { return (200, Self.models) }
-            return (200, Data("data: {\"type\":\"response.failed\",\"response\":{\"error\":{\"code\":\"subscription_sharing_usage_limit_exceeded\"}}}\n\n".utf8))
+            return (200, Self.sse([Self.created, #"{"type":"response.failed","sequence_number":1,"response":{"id":"resp_test","object":"response","status":"failed","error":{"code":"subscription_sharing_usage_limit_exceeded"}}}"#]))
         }
         let request = GenerationRequest(id: UUID(), modelID: "text", messages: [PromptMessage(role: .user, text: "Hi", attachmentIDs: [])], imageData: [:])
         do { for try await _ in provider.stream(request) {}; XCTFail("Expected usage limit error") }
@@ -134,7 +230,7 @@ final class OpenAIPlanProviderTests: XCTestCase {
         await fulfillment(of: [started], timeout: 2)
         await provider.cancel(id)
         await fulfillment(of: [stopped], timeout: 2)
-        _ = try? await consumer.value
+        do { try await consumer.value; XCTFail("Cancelled generation must terminate with an error") } catch {}
     }
 
     private func makeProvider() throws -> OpenAIPlanProvider {
@@ -172,6 +268,7 @@ private final class FakePlanURLProtocol: URLProtocol {
         } catch { client?.urlProtocol(self, didFailWithError: error) }
     }
     override func stopLoading() {
+        guard request.url?.path == "/v1/responses" else { return }
         let expectation = Self.lock.withLock { let value = Self.stopped; Self.stopped = nil; return value }
         expectation?.fulfill()
     }

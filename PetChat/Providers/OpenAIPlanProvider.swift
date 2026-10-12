@@ -76,10 +76,11 @@ final class OpenAIPlanProvider: ChatProvider, @unchecked Sendable {
                     var line = Data()
                     var eventData = Data()
                     var completed = false
+                    var state = StreamState()
                     for try await byte in bytes {
                         try Task.checkCancellation()
                         if byte == 10 {
-                            if try process(line: line, eventData: &eventData, continuation: continuation) {
+                            if try process(line: line, eventData: &eventData, state: &state, continuation: continuation) {
                                 completed = true
                                 break
                             }
@@ -90,8 +91,8 @@ final class OpenAIPlanProvider: ChatProvider, @unchecked Sendable {
                         }
                     }
                     if !completed {
-                        if !line.isEmpty, try process(line: line, eventData: &eventData, continuation: continuation) { completed = true }
-                        else if !eventData.isEmpty { completed = try dispatch(eventData, continuation: continuation) }
+                        if !line.isEmpty, try process(line: line, eventData: &eventData, state: &state, continuation: continuation) { completed = true }
+                        else if !eventData.isEmpty { completed = try dispatch(eventData, state: &state, continuation: continuation) }
                     }
                     try Task.checkCancellation()
                     guard completed else { throw ChatGPTError.incompleteResponse }
@@ -122,13 +123,13 @@ final class OpenAIPlanProvider: ChatProvider, @unchecked Sendable {
         guard response.statusCode == 200 else { throw ChatGPTError.requestFailed(response.statusCode) }
     }
 
-    private func process(line: Data, eventData: inout Data,
+    private func process(line: Data, eventData: inout Data, state: inout StreamState,
                          continuation: AsyncThrowingStream<GenerationEvent, Error>.Continuation) throws -> Bool {
         let line = line.last == 13 ? line.dropLast() : line[...]
         if line.isEmpty {
             guard !eventData.isEmpty else { return false }
             defer { eventData.removeAll(keepingCapacity: true) }
-            return try dispatch(eventData, continuation: continuation)
+            return try dispatch(eventData, state: &state, continuation: continuation)
         }
         if line.starts(with: Data("data: ".utf8)) {
             guard eventData.count + line.count <= maxJSONBytes else { throw ChatGPTError.invalidResponse }
@@ -142,17 +143,50 @@ final class OpenAIPlanProvider: ChatProvider, @unchecked Sendable {
         return false
     }
 
-    private func dispatch(_ data: Data,
+    private func dispatch(_ data: Data, state: inout StreamState,
                           continuation: AsyncThrowingStream<GenerationEvent, Error>.Continuation) throws -> Bool {
         guard let event = try? JSONDecoder().decode(StreamEvent.self, from: data) else {
             throw ChatGPTError.invalidResponse
         }
+        guard event.sequenceNumber >= 0, event.sequenceNumber > state.lastSequence else {
+            throw ChatGPTError.invalidResponse
+        }
+        state.lastSequence = event.sequenceNumber
+        if let response = event.response {
+            guard let id = response.id, !id.isEmpty, response.object == "response",
+                  state.responseID == nil || state.responseID == id else { throw ChatGPTError.invalidResponse }
+            state.responseID = id
+        }
         switch event.type {
+        case "response.created":
+            guard event.response?.status == "in_progress" else { throw ChatGPTError.invalidResponse }
+            return false
         case "response.output_text.delta":
             guard let delta = event.delta else { throw ChatGPTError.invalidResponse }
-            if !delta.isEmpty { continuation.yield(.textDelta(delta)) }
+            if !delta.isEmpty { state.hasText = true; continuation.yield(.textDelta(delta)) }
             return false
-        case "response.completed": return true
+        case "response.refusal.delta", "response.refusal.done":
+            guard let itemID = event.itemID, !itemID.isEmpty,
+                  let outputIndex = event.outputIndex, outputIndex >= 0,
+                  let contentIndex = event.contentIndex, contentIndex >= 0 else { throw ChatGPTError.invalidResponse }
+            let key = RefusalKey(itemID: itemID, outputIndex: outputIndex, contentIndex: contentIndex)
+            let previous = state.refusals[key, default: ""]
+            let delta: String
+            if event.type == "response.refusal.delta" {
+                guard let text = event.delta else { throw ChatGPTError.invalidResponse }
+                delta = text
+                state.refusals[key] = previous + text
+            } else {
+                guard let text = event.refusal, text.hasPrefix(previous) else { throw ChatGPTError.invalidResponse }
+                delta = String(text.dropFirst(previous.count))
+                state.refusals[key] = text
+            }
+            if !delta.isEmpty { state.hasText = true; continuation.yield(.textDelta(delta)) }
+            return false
+        case "response.completed":
+            guard let response = event.response, response.status == "completed", response.error == nil,
+                  let output = response.output, !output.isEmpty, state.hasText else { throw ChatGPTError.invalidResponse }
+            return true
         case "response.failed":
             if let code = event.response?.error?.code,
                ["subscription_sharing_usage_limit_exceeded", "subscription_sharing_usage_unavailable"].contains(code) {
@@ -189,12 +223,42 @@ private struct PlanModel: Decodable {
         case contextWindow = "context_window"
     }
 }
+private struct StreamState {
+    var lastSequence = -1
+    var responseID: String?
+    var hasText = false
+    var refusals: [RefusalKey: String] = [:]
+}
+
+private struct RefusalKey: Hashable {
+    let itemID: String
+    let outputIndex: Int
+    let contentIndex: Int
+}
+
 private struct StreamEvent: Decodable {
     let type: String
+    let sequenceNumber: Int
     let delta: String?
+    let refusal: String?
+    let itemID: String?
+    let outputIndex: Int?
+    let contentIndex: Int?
     let response: Response?
+    enum CodingKeys: String, CodingKey {
+        case type, delta, refusal, response
+        case sequenceNumber = "sequence_number"
+        case itemID = "item_id"
+        case outputIndex = "output_index"
+        case contentIndex = "content_index"
+    }
     struct Response: Decodable {
+        let id: String?
+        let object: String?
+        let status: String?
+        let output: [Output]?
         let error: Failure?
+        struct Output: Decodable { let type: String }
         struct Failure: Decodable { let code: String? }
     }
 }
