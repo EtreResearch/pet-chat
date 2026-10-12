@@ -103,22 +103,41 @@ final class PetPanelTests: XCTestCase {
         XCTAssertEqual(recorded, Shortcut(keyCode: 7, modifiers: 4096 | 2048 | 512))
     }
 
-    private func makeModel() throws -> AppModel {
+    func testDesktopLaunchIsPetOnlyAndDoesNotLoadModelsUntilSummoned() async throws {
+        let provider = PanelTestProvider()
+        let delegate = AppDelegate()
+        let model = try makeModel(provider: provider)
+        delegate.startDesktop(model: model, defaults: UserDefaults(suiteName: UUID().uuidString)!)
+        let panel = try XCTUnwrap(delegate.panelController)
+        defer { panel.hidePet() }
+        try await Task.sleep(for: .milliseconds(200))
+        XCTAssertTrue(panel.petPanel.isVisible)
+        XCTAssertFalse(panel.chatPanel.isVisible)
+        let idleCatalogCalls = await provider.catalogCalls
+        XCTAssertEqual(idleCatalogCalls, 0)
+        panel.showChat()
+        try await Task.sleep(for: .milliseconds(200))
+        let summonedCatalogCalls = await provider.catalogCalls
+        XCTAssertEqual(summonedCatalogCalls, 1)
+    }
+
+    private func makeModel(provider: PanelTestProvider = PanelTestProvider()) throws -> AppModel {
         let attachments = AttachmentStore(root: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString))
         let container = try ModelContainer(for: ChatRecord.self, MessageRecord.self,
                                            configurations: ModelConfiguration(isStoredInMemoryOnly: true))
         let store = try LocalChatStore(container: container, attachments: attachments)
-        let coordinator = try ChatCoordinator(providers: [.ollama: PanelTestProvider()], store: store, attachments: attachments)
+        let coordinator = try ChatCoordinator(providers: [.ollama: provider], store: store, attachments: attachments)
         let model = AppModel(coordinator: coordinator, defaults: UserDefaults(suiteName: UUID().uuidString)!)
         try model.select(providerID: .ollama, modelID: "test")
         return model
     }
 }
 
-private struct PanelTestProvider: ChatProvider {
+private actor PanelTestProvider: ChatProvider {
     let providerID: ProviderID = .ollama
-    func availableModels() async throws -> [ProviderModel] { [] }
-    func stream(_ request: GenerationRequest) -> AsyncThrowingStream<GenerationEvent, Error> {
+    private(set) var catalogCalls = 0
+    func availableModels() async throws -> [ProviderModel] { catalogCalls += 1; return [] }
+    nonisolated func stream(_ request: GenerationRequest) -> AsyncThrowingStream<GenerationEvent, Error> {
         AsyncThrowingStream { $0.finish() }
     }
     func cancel(_ requestID: UUID) async {}

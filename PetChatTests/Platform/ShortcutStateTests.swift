@@ -5,8 +5,8 @@ import XCTest
 @MainActor
 final class ShortcutStateTests: XCTestCase {
     func testConflictKeepsPreviouslyRegisteredShortcut() throws {
-        let first = GlobalShortcutController(onSummon: {})
-        let second = GlobalShortcutController(onSummon: {})
+        let first = GlobalShortcutController(defaults: UserDefaults(suiteName: UUID().uuidString)!, onSummon: {})
+        let second = GlobalShortcutController(defaults: UserDefaults(suiteName: UUID().uuidString)!, onSummon: {})
         let occupied = Shortcut(keyCode: UInt32(kVK_F19), modifiers: UInt32(controlKey | optionKey | cmdKey))
         let previous = Shortcut(keyCode: UInt32(kVK_F18), modifiers: UInt32(controlKey | optionKey | cmdKey))
         try first.register(occupied)
@@ -19,8 +19,8 @@ final class ShortcutStateTests: XCTestCase {
 
     func testCarbonEventSummonsOnlyItsRegisteredController() throws {
         var firstCalls = 0, secondCalls = 0
-        let first = GlobalShortcutController(onSummon: { firstCalls += 1 })
-        let second = GlobalShortcutController(onSummon: { secondCalls += 1 })
+        let first = GlobalShortcutController(defaults: UserDefaults(suiteName: UUID().uuidString)!, onSummon: { firstCalls += 1 })
+        let second = GlobalShortcutController(defaults: UserDefaults(suiteName: UUID().uuidString)!, onSummon: { secondCalls += 1 })
         try first.register(Shortcut(keyCode: UInt32(kVK_F16), modifiers: UInt32(controlKey | optionKey | cmdKey)))
         try second.register(Shortcut(keyCode: UInt32(kVK_F15), modifiers: UInt32(controlKey | optionKey | cmdKey)))
         var event: EventRef?

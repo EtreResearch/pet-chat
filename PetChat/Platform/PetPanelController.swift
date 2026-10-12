@@ -48,6 +48,7 @@ final class PetPanelController: NSObject {
     private var wantsPetVisible = true
     private var fullScreen = false
     private var summonedInFullScreen = false
+    private var chatContentInstalled = false
 
     private var displays: [PetDisplay] {
         NSScreen.screens.compactMap { screen in
@@ -88,9 +89,6 @@ final class PetPanelController: NSObject {
         chatPanel.onCollapse = { [weak self] in self?.collapseChat(preservingDraft: true) }
         petPanel.contentView = PetInteractionView(model: model, onClick: { [weak self] in self?.showChat() },
                                                  onDrag: { [weak self] in self?.movePet(to: $0) })
-        chatPanel.contentView = NSHostingView(rootView: FloatingChatRootView(model: model, onClose: { [weak self] in
-            self?.collapseChat(preservingDraft: true)
-        }))
         selectedDisplayID = (defaults.object(forKey: "PetChat.selectedDisplayID") as? NSNumber)?.uint32Value
         repositionPet(for: selectedDisplayID ?? displays.first?.id ?? 0)
         NotificationCenter.default.addObserver(self, selector: #selector(displaysChanged),
@@ -99,11 +97,18 @@ final class PetPanelController: NSObject {
                                                name: NSApplication.didResignActiveNotification, object: nil)
         NSWorkspace.shared.notificationCenter.addObserver(self, selector: #selector(spaceChanged),
                                                           name: NSWorkspace.activeSpaceDidChangeNotification, object: nil)
+        spaceChanged()
     }
 
     deinit { NotificationCenter.default.removeObserver(self); NSWorkspace.shared.notificationCenter.removeObserver(self) }
 
     func showChat() {
+        if !chatContentInstalled {
+            chatPanel.contentView = NSHostingView(rootView: FloatingChatRootView(model: model, onClose: { [weak self] in
+                self?.collapseChat(preservingDraft: true)
+            }))
+            chatContentInstalled = true
+        }
         wantsPetVisible = true
         summonedInFullScreen = fullScreen
         petPanel.orderFrontRegardless()
