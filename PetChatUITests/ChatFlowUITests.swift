@@ -4,6 +4,7 @@ import XCTest
 class IsolatedUITestCase: XCTestCase {
     let app = XCUIApplication()
     var fixtureRoot: URL!
+    private var cleanupRequested = false
     var opensChatOnLaunch: Bool { true }
 
     override func setUp() async throws {
@@ -15,9 +16,21 @@ class IsolatedUITestCase: XCTestCase {
     }
 
     override func tearDown() async throws {
+        guard !cleanupRequested else { return }
+        cleanupRequested = true
+        defer { app.terminate() }
         app.terminate()
-        UserDefaults(suiteName: "PetChat.UI.\(fixtureRoot.lastPathComponent)")?.removePersistentDomain(forName: "PetChat.UI.\(fixtureRoot.lastPathComponent)")
-        try? FileManager.default.removeItem(at: fixtureRoot)
+        let domain = "PetChat.UI.\(fixtureRoot.lastPathComponent)"
+        app.launchEnvironment["PET_CHAT_UI_CLEANUP"] = "1"
+        app.launch()
+        let receipt = fixtureRoot.appendingPathComponent("cleanup-complete")
+        let cleaned = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            FileManager.default.fileExists(atPath: receipt.path)
+        }, object: nil)
+        await fulfillment(of: [cleaned], timeout: 3)
+        app.terminate()
+        XCTAssertEqual(try? String(contentsOf: receipt, encoding: .utf8), domain)
+        try FileManager.default.removeItem(at: fixtureRoot)
     }
 
     func openChat() {

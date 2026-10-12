@@ -9,9 +9,23 @@ struct UITestFixture {
     let model: AppModel
     let defaults: UserDefaults
 
+    static func preferencesDomain(root: URL) -> String {
+        "PetChat.UI.\(root.lastPathComponent)"
+    }
+
+    static func cleanPreferences(root: URL) throws {
+        let domain = preferencesDomain(root: root)
+        let defaults = UserDefaults(suiteName: domain)!
+        defaults.removePersistentDomain(forName: domain)
+        guard defaults.synchronize(), defaults.persistentDomain(forName: domain) == nil else {
+            throw CocoaError(.fileWriteUnknown)
+        }
+        try Data(domain.utf8).write(to: root.appendingPathComponent("cleanup-complete"), options: .atomic)
+    }
+
     init(root: URL) throws {
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-        defaults = UserDefaults(suiteName: "PetChat.UI.\(root.lastPathComponent)")!
+        defaults = UserDefaults(suiteName: Self.preferencesDomain(root: root))!
         let attachments = AttachmentStore(root: root.appendingPathComponent("Attachments"))
         let configuration = ModelConfiguration(url: root.appendingPathComponent("history.store"))
         let container = try ModelContainer(for: ChatRecord.self, MessageRecord.self, configurations: configuration)

@@ -15,7 +15,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         #if DEBUG
         if let path = ProcessInfo.processInfo.environment["PET_CHAT_UI_ROOT"] {
             do {
-                let fixture = try UITestFixture(root: URL(fileURLWithPath: path, isDirectory: true))
+                let root = URL(fileURLWithPath: path, isDirectory: true)
+                if ProcessInfo.processInfo.environment["PET_CHAT_UI_CLEANUP"] == "1" {
+                    try UITestFixture.cleanPreferences(root: root)
+                    return
+                }
+                let fixture = try UITestFixture(root: root)
                 startDesktop(model: fixture.model, defaults: fixture.defaults, fullScreenProvider: { _ in false })
                 fixture.model.captureRegion = { UITestFixture.image() }
                 if ProcessInfo.processInfo.environment["PET_CHAT_UI_OPEN_CHAT"] == "1" {
