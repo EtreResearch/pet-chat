@@ -58,7 +58,7 @@ final class ChatCoordinatorTests: XCTestCase {
         let send = Task { try await fixture.coordinator.send(text: "Hi", attachmentIDs: [], threadID: thread.id) }
         await fulfillment(of: [started], timeout: 2)
 
-        await fixture.coordinator.stop(threadID: thread.id)
+        try await fixture.coordinator.stop(threadID: thread.id)
         fixture.provider.continuation?.yield(.textDelta(" ignored"))
         fixture.provider.continuation?.finish()
         try await send.value
@@ -131,9 +131,61 @@ final class ChatCoordinatorTests: XCTestCase {
         XCTAssertEqual(model.thread?.providerID, .chatGPT)
         XCTAssertEqual(model.draft, "")
     }
+
+    func testRetryReplacesFailedTurnWithoutSendingItsPartialReplyAsContext() async throws {
+        let fixture = try Fixture()
+        fixture.provider.events = [.textDelta("broken")]
+        fixture.provider.failure = TestFailure.disconnected
+        let model = AppModel(coordinator: fixture.coordinator)
+        try model.select(providerID: .ollama, modelID: "text")
+        model.draft = "Question"
+        await model.submit()
+        fixture.provider.events = [.textDelta("Working"), .completed]
+        fixture.provider.failure = nil
+
+        await model.retry()
+
+        XCTAssertEqual(fixture.provider.requests.last?.messages.map(\.text), ["Question"])
+        XCTAssertEqual(model.thread?.messages.map(\.text), ["Question", "Working"])
+        XCTAssertEqual(model.draft, "")
+    }
+
+    func testDeletionDuringModelDiscoveryCannotResurrectThread() async throws {
+        let fixture = try Fixture()
+        let started = expectation(description: "model discovery started")
+        fixture.provider.holdModels = true
+        fixture.provider.onModels = { started.fulfill() }
+        let thread = try fixture.coordinator.newThread(providerID: .ollama, modelID: "text")
+        let send = Task { try await fixture.coordinator.send(text: "Hi", attachmentIDs: [], threadID: thread.id) }
+        await fulfillment(of: [started], timeout: 2)
+
+        try fixture.coordinator.deleteThread(thread.id)
+        fixture.provider.modelsGate?.resume()
+        do { try await send.value; XCTFail("Deleted thread was sent") }
+        catch { XCTAssertTrue(fixture.provider.requests.isEmpty) }
+        XCTAssertTrue(try fixture.store.load().isEmpty)
+    }
+
+    func testStopCancelsProviderAndReportsFailedLocalSave() async throws {
+        let fixture = try Fixture()
+        let started = expectation(description: "stream started")
+        fixture.provider.events = [.textDelta("Partial")]
+        fixture.provider.holdOpen = true
+        fixture.provider.onStream = { started.fulfill() }
+        let thread = try fixture.coordinator.newThread(providerID: .ollama, modelID: "text")
+        let send = Task { try await fixture.coordinator.send(text: "Hi", attachmentIDs: [], threadID: thread.id) }
+        await fulfillment(of: [started], timeout: 2)
+        fixture.snapshots.failNextSave = true
+
+        do { try await fixture.coordinator.stop(threadID: thread.id); XCTFail("Expected save error") }
+        catch { XCTAssertTrue(error is TestFailure) }
+        XCTAssertTrue(fixture.provider.cancelled)
+        try await send.value
+        XCTAssertEqual(try fixture.store.load().first?.messages.last?.status, .failed)
+    }
 }
 
-private enum TestFailure: Error { case disconnected }
+private enum TestFailure: Error { case disconnected, disk }
 
 @MainActor
 private final class Fixture {
@@ -151,6 +203,7 @@ private final class Fixture {
                                            configurations: ModelConfiguration(isStoredInMemoryOnly: true))
         let snapshots = snapshots
         store = try LocalChatStore(container: container, attachments: attachments, saveContext: { context in
+            if snapshots.failNextSave { snapshots.failNextSave = false; throw TestFailure.disk }
             try context.save()
             snapshots.threads += try context.fetch(FetchDescriptor<ChatRecord>()).map { try $0.thread() }
         })
@@ -159,7 +212,10 @@ private final class Fixture {
     deinit { try? FileManager.default.removeItem(at: directory) }
 }
 
-@MainActor private final class SnapshotBox { var threads: [ChatThread] = [] }
+@MainActor private final class SnapshotBox {
+    var threads: [ChatThread] = []
+    var failNextSave = false
+}
 
 private final class ScriptedProvider: ChatProvider, @unchecked Sendable {
     let providerID: ProviderID
@@ -169,10 +225,20 @@ private final class ScriptedProvider: ChatProvider, @unchecked Sendable {
     var failure: Error?
     var onStream: (() -> Void)?
     var continuation: AsyncThrowingStream<GenerationEvent, Error>.Continuation?
+    var holdModels = false
+    var onModels: (() -> Void)?
+    var modelsGate: CheckedContinuation<Void, Never>?
+    var cancelled = false
 
     init(id: ProviderID) { providerID = id }
     func availableModels() async throws -> [ProviderModel] {
-        [ProviderModel(id: providerID == .ollama ? "text" : "gpt", displayName: "Test", supportsImages: true, contextWindowTokens: 4096)]
+        if holdModels {
+            await withCheckedContinuation { continuation in
+                modelsGate = continuation
+                onModels?()
+            }
+        }
+        return [ProviderModel(id: providerID == .ollama ? "text" : "gpt", displayName: "Test", supportsImages: true, contextWindowTokens: 4096)]
     }
     func stream(_ request: GenerationRequest) -> AsyncThrowingStream<GenerationEvent, Error> {
         requests.append(request)
@@ -184,5 +250,8 @@ private final class ScriptedProvider: ChatProvider, @unchecked Sendable {
             else if !holdOpen { continuation.finish() }
         }
     }
-    func cancel(_ requestID: UUID) async { continuation?.finish(throwing: CancellationError()) }
+    func cancel(_ requestID: UUID) async {
+        cancelled = true
+        continuation?.finish(throwing: CancellationError())
+    }
 }

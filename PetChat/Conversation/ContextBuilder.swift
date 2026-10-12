@@ -16,7 +16,7 @@ enum ContextBuilder {
         for message in thread.messages {
             if message.role == .user {
                 pairs.append([PromptMessage(role: .user, text: message.text, attachmentIDs: [])])
-            } else if pairs.last?.count == 1 {
+            } else if message.status == .complete, pairs.last?.count == 1 {
                 pairs[pairs.count - 1].append(PromptMessage(role: .assistant, text: message.text, attachmentIDs: []))
             }
         }

@@ -55,21 +55,31 @@ final class ChatCoordinator {
         guard let index = threads.firstIndex(where: { $0.id == threadID }) else { throw Error.missingThread }
         guard activeRequests[threadID] == nil else { throw Error.busy }
         guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !attachmentIDs.isEmpty else { throw Error.emptyMessage }
-        let thread = threads[index]
-        guard let provider = providers[thread.providerID] else { throw Error.missingProvider }
+        let selected = threads[index]
+        guard let provider = providers[selected.providerID] else { throw Error.missingProvider }
         let models = try await provider.availableModels()
+        guard let thread = threads.first(where: { $0.id == threadID }),
+              thread.providerID == selected.providerID, thread.modelID == selected.modelID else { throw Error.missingThread }
         guard let model = models.first(where: { $0.id == thread.modelID }) else { throw Error.missingModel }
         guard activeRequests[threadID] == nil else { throw Error.busy }
         let images = try Dictionary(uniqueKeysWithValues: attachmentIDs.map { ($0, try attachments.load($0, threadID: threadID)) })
-        let prompt = ContextBuilder.build(thread: thread, currentText: text, currentAttachmentIDs: attachmentIDs,
+        var updated = thread
+        if updated.messages.count >= 2,
+           updated.messages[updated.messages.count - 2].role == .user,
+           updated.messages[updated.messages.count - 2].text == text,
+           updated.messages[updated.messages.count - 2].attachmentIDs == attachmentIDs,
+           updated.messages.last?.role == .pet,
+           updated.messages.last?.status == .failed {
+            updated.messages.removeLast(2)
+        }
+        let prompt = ContextBuilder.build(thread: updated, currentText: text, currentAttachmentIDs: attachmentIDs,
                                           contextWindowTokens: model.contextWindowTokens)
         let request = GenerationRequest(id: UUID(), modelID: thread.modelID, messages: prompt, imageData: images)
-        var updated = thread
         updated.messages.append(ChatMessage(role: .user, text: text, attachmentIDs: attachmentIDs))
         updated.messages.append(ChatMessage(role: .pet, text: "", status: .failed))
         try save(updated)
         activeRequests[threadID] = request.id
-        defer { activeRequests.removeValue(forKey: threadID) }
+        defer { if activeRequests[threadID] == request.id { activeRequests.removeValue(forKey: threadID) } }
         do {
             var completed = false
             for try await event in provider.stream(request) {
@@ -93,16 +103,15 @@ final class ChatCoordinator {
         }
     }
 
-    func stop(threadID: UUID) async {
-        guard let requestID = activeRequests.removeValue(forKey: threadID),
+    func stop(threadID: UUID) async throws {
+        guard let requestID = activeRequests[threadID],
               let index = threads.firstIndex(where: { $0.id == threadID }) else { return }
         var thread = threads[index]
         thread.messages[thread.messages.count - 1].status = .stopped
-        do { try save(thread) } catch {
-            activeRequests[threadID] = requestID
-            return
-        }
+        let saveResult = Result { try save(thread) }
+        activeRequests.removeValue(forKey: threadID)
         await providers[thread.providerID]?.cancel(requestID)
+        try saveResult.get()
     }
 
     private func save(_ thread: ChatThread) throws {

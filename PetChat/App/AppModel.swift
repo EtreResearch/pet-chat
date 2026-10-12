@@ -87,6 +87,7 @@ final class AppModel {
 
     func stop() async {
         guard let id = currentThreadID else { return }
-        await coordinator.stop(threadID: id)
+        do { try await coordinator.stop(threadID: id) }
+        catch { errorMessage = error.localizedDescription }
     }
 }
