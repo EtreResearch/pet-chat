@@ -232,25 +232,29 @@ Automated coverage passed 114/114 after review and one fix round. Local ad-hoc s
 - `LoginItemController.isEnabled: Bool` and `setEnabled(_ enabled: Bool) throws` use `SMAppService.mainApp`.
 - Settings persist the last selected provider/model, hotkey, display ID, position, and opt-in login setting. ChatGPT sign-out deletes only ChatGPT credentials and starts no request.
 
-- [ ] **Step 1: Add failing tests** for login launch default-off/opt-in, provider/model restoration, chat-provider identity persistence across restart, sign-out, and reduced-motion behavior.
-- [ ] **Step 2: Run settings/accessibility/platform tests and confirm failure.**
-- [ ] **Step 3: Implement startup consent and controls, permission explanations, VoiceOver labels, a persisted Settings Text size picker (Standard 13pt / Larger 17pt) for message text and composer within the compact scrollable panel, contrast checks, reduced-motion handling, and clean interrupted-task shutdown.**
+- [x] **Step 1: Add failing tests** for login launch default-off/opt-in, provider/model restoration, chat-provider identity persistence across restart, sign-out, and reduced-motion behavior.
+- [x] **Step 2: Run settings/accessibility/platform tests and confirm failure.**
+- [x] **Step 3: Implement startup consent and controls, permission explanations, VoiceOver labels, a persisted Settings Text size picker (Standard 13pt / Larger 17pt) for message text and composer within the compact scrollable panel, contrast checks, reduced-motion handling, and clean interrupted-task shutdown.**
 - [ ] **Step 4: Rerun tests and manually verify login prompt/settings, sign-out, screen permission recovery, VoiceOver, and Reduce Motion.**
-- [ ] **Step 5: Commit** `feat: finish setup, preferences, and accessibility`.
+- [x] **Step 5: Commit** `feat: finish setup, preferences, and accessibility`.
+
+Independent review approved with no findings. Signed unit target passed 134/134; idle UI launch passed 1/1. Actual login registration/approval, screen permission recovery, VoiceOver, OS Reduce Motion, and physical contrast remain manual checks.
 
 ### Task 10: Validate the integrated release on the target Mac
 
 **Files:**
-- Modify `PetChatUITests/ChatFlowUITests.swift`.
+- Create `PetChatUITests/ChatFlowUITests.swift` and an isolated test-launch fixture; update existing UI tests to use it.
+- Modify app launch only as needed for a DEBUG-only fake provider/capture/login fixture and to keep unit-test host startup isolated from production user data.
+- Update `.gitignore` for a local `build/` artifact; deliver the verified Release app at `build/PetChat.app` without committing binaries.
 - Modify `README.md` with build/run, permissions, first-run setup, provider setup, login launch, and known ChatGPT eligibility limits.
 - Modify `PetChat.xcodeproj/project.pbxproj` only for verified signing, permission descriptions, and bundle metadata required by the final checks.
 
 **Interfaces:**
-- Use only the provider, coordinator, store, panel, capture, and settings interfaces from Tasks 2–9; do not add app control or background request paths.
+- Use only the provider, coordinator, store, panel, capture, and settings interfaces from Tasks 2–9; do not add app control or background request paths. Automated UI fixtures use temporary persistence, isolated preferences and fake provider/capture/login services; they never use live credentials, images, model requests, or OS registration. Preserve fixture state only for intentional restart tests.
 
-- [ ] **Step 1: Add end-to-end UI coverage** for plain text through a fake provider, follow-up, Tell me more, Stop/Retry, capture preview/send, new provider chat, restart restoration, and delete.
-- [ ] **Step 2: Run `xcodebuild test -project PetChat.xcodeproj -scheme PetChat -destination 'platform=macOS'` and confirm every automated test passes.**
-- [ ] **Step 3: Run `xcodebuild build -project PetChat.xcodeproj -scheme PetChat -configuration Release -destination 'platform=macOS'` and confirm the signed local app bundle builds.**
+- [ ] **Step 1: Add end-to-end UI coverage** for plain text through a fake provider, follow-up, Tell me more, Stop/Retry, capture preview/send, new provider chat, restart restoration, delete, Escape/draft retention, and Task 9 setup/settings controls. Capture window-only screenshots from synthetic fixture states for visual inspection; do not capture unrelated desktop content.
+- [ ] **Step 2: Run `xcodebuild test -project PetChat.xcodeproj -scheme PetChat -destination 'platform=macOS' -parallel-testing-enabled NO CODE_SIGN_IDENTITY=- CODE_SIGNING_ALLOWED=YES` and confirm every automated test passes. Local ad-hoc signing is required for this UI runner.**
+- [ ] **Step 3: Run `xcodebuild build -project PetChat.xcodeproj -scheme PetChat -configuration Release -destination 'platform=macOS' CODE_SIGN_IDENTITY=- CODE_SIGNING_ALLOWED=YES` and confirm the signed local app bundle builds. Copy the verified bundle to ignored `build/PetChat.app` and document how to run it; do not install or distribute it.**
 - [ ] **Step 4: Manually test the two provider flows and measure time to first visible text and completion using the user's installed Ollama model and eligible ChatGPT account, if available. Record actual machine/OS/model values in the README; do not claim a universal response time.**
 - [ ] **Step 5: Review application logs and test output for tokens, image bytes, and unsubmitted prompts; confirm chat deletion removes only its own attachment files.**
 - [ ] **Step 6: Commit** `test: validate pet chat on macOS`.
