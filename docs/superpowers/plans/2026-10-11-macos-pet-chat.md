@@ -209,11 +209,13 @@ Automated platform checks passed 93/93 after independent review. Offscreen cat/c
 - `RegionSelectionOverlay` yields a rectangle for the selected display. Convert AppKit global coordinates to display-local top-left logical points for `SCStreamConfiguration.sourceRect`; apply `SCContentFilter.pointPixelScale` only to output pixel dimensions. Check the SDK contract to avoid double scaling on Retina displays. Hide the pet and chat before selection/capture, exclude this app's windows from the screenshot, and restore the chat on success, cancel, or error.
 - Explicit clipboard image paste and Capture area both create removable previews. Ordinary text paste remains native. Validate image bytes before storing. Selection/paste never submits; Send attaches images only to that user turn. Capture results must not move to another thread/provider when asynchronous state changes. Removing a draft preview must never delete an image already referenced by a submitted message.
 
-- [ ] **Step 1: Add failing tests** for Escape cancellation, denied screen permission, invalid/empty selection, Retina scale conversion, selected-display bounds (including negative origins and Y-axis conversion), preview retention until Send, image paste/removal, failed-send retention, and late capture results after a thread/provider change.
-- [ ] **Step 2: Run capture/coordinator/UI tests and confirm they fail.**
-- [ ] **Step 3: Implement the ScreenCaptureKit picker and region capture** using macOS 14 APIs with the required `NSScreenCaptureUsageDescription`; wire clipboard image paste, removable image previews, and attachment persistence into the composer. Attach image bytes only to the current user's submitted message. Never request screen access or capture at startup/idle.
+- [x] **Step 1: Add failing tests** for Escape cancellation, denied screen permission, invalid/empty selection, Retina scale conversion, selected-display bounds (including negative origins and Y-axis conversion), preview retention until Send, image paste/removal, failed-send retention, and late capture results after a thread/provider change.
+- [x] **Step 2: Run capture/coordinator/UI tests and confirm they fail.**
+- [x] **Step 3: Implement the ScreenCaptureKit picker and region capture** using macOS 14 APIs with the required `NSScreenCaptureUsageDescription`; wire clipboard image paste, removable image previews, and attachment persistence into the composer. Attach image bytes only to the current user's submitted message. Never request screen access or capture at startup/idle.
 - [ ] **Step 4: Rerun automated tests; where interactive access/account/model are available, manually verify first-use permission, selection, cancel, preview, attachment persistence, and a vision-model question.**
-- [ ] **Step 5: Commit** `feat: capture and attach explicit screen regions`.
+- [x] **Step 5: Commit** `feat: capture and attach explicit screen regions`.
+
+Automated coverage passed 114/114 after review and one fix round. Local ad-hoc signing restored the UI runner (focused launch 1/1). Real first-use screen permission, pixel capture, vision response, and full preview visual QA remain manual checks.
 
 ### Task 9: Add first-run settings, login launch, recovery, and accessibility details
 
