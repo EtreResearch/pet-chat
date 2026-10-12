@@ -12,6 +12,7 @@ final class AppModel {
     var draft = ""
     var attachmentIDs: [UUID] = []
     private(set) var isLoading = false
+    private var activeSubmissionID: UUID?
     private(set) var errorMessage: String?
     private(set) var models: [ProviderModel] = []
     private var modelLoadID: UUID?
@@ -97,17 +98,27 @@ final class AppModel {
         guard let id = currentThreadID, !isLoading else { return }
         let text = draft
         let images = attachmentIDs
+        let submissionID = UUID()
+        activeSubmissionID = submissionID
         isLoading = true
         errorMessage = nil
-        defer { isLoading = false }
+        defer {
+            if activeSubmissionID == submissionID {
+                activeSubmissionID = nil
+                isLoading = false
+            }
+        }
         do {
             try await coordinator.send(text: text, attachmentIDs: images, threadID: id)
-            if currentThreadID == id, thread?.messages.last?.status == .complete,
+            if activeSubmissionID == submissionID, currentThreadID == id,
+               thread?.messages.last?.status == .complete,
                draft == text, attachmentIDs == images {
                 draft = ""
                 attachmentIDs = []
             }
-        } catch { errorMessage = error.localizedDescription }
+        } catch {
+            if activeSubmissionID == submissionID { errorMessage = error.localizedDescription }
+        }
     }
 
     func retry() async { await submit() }
@@ -121,8 +132,17 @@ final class AppModel {
 
     func stop() async {
         guard let id = currentThreadID else { return }
+        let submissionID = activeSubmissionID
         do { try await coordinator.stop(threadID: id) }
-        catch { errorMessage = error.localizedDescription }
+        catch {
+            if activeSubmissionID == submissionID || activeSubmissionID == nil {
+                errorMessage = error.localizedDescription
+            }
+        }
+        if activeSubmissionID == submissionID {
+            activeSubmissionID = nil
+            isLoading = false
+        }
     }
 
     func report(_ error: Error) { errorMessage = error.localizedDescription }

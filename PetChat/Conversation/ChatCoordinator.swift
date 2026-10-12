@@ -5,7 +5,7 @@ import Observation
 final class ChatCoordinator {
     static let expansionQuestion = "Tell me more about your last answer."
     enum Error: LocalizedError {
-        case missingThread, missingProvider, missingModel, busy, emptyMessage, incompleteResponse
+        case missingThread, missingProvider, missingModel, busy, emptyMessage, incompleteResponse, stopped
 
         var errorDescription: String? {
             switch self {
@@ -15,6 +15,7 @@ final class ChatCoordinator {
             case .busy: "Wait for the current answer or press Stop."
             case .emptyMessage: "Enter a question or attach an image."
             case .incompleteResponse: "The answer ended before it completed. Try again."
+            case .stopped: "Stopped before sending. Your draft is saved."
             }
         }
     }
@@ -24,6 +25,7 @@ final class ChatCoordinator {
     private let attachments: AttachmentStore
     private(set) var threads: [ChatThread]
     private var activeRequests: [UUID: UUID] = [:]
+    private var pendingRequests: Set<UUID> = []
 
     init(providers: [ProviderID: any ChatProvider], store: LocalChatStore, attachments: AttachmentStore) throws {
         self.providers = providers
@@ -47,8 +49,16 @@ final class ChatCoordinator {
     }
 
     func deleteThread(_ id: UUID) throws {
-        guard activeRequests[id] == nil else { throw Error.busy }
-        try store.delete(threadID: id)
+        if let requestID = activeRequests[id] {
+            guard pendingRequests.contains(requestID) else { throw Error.busy }
+            activeRequests.removeValue(forKey: id)
+        }
+        do { try store.delete(threadID: id) }
+        catch {
+            if let persisted = try? store.load() { threads = persisted }
+            else { threads.removeAll { $0.id == id } }
+            throw error
+        }
         threads.removeAll { $0.id == id }
     }
 
@@ -58,11 +68,18 @@ final class ChatCoordinator {
         guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !attachmentIDs.isEmpty else { throw Error.emptyMessage }
         let selected = threads[index]
         guard let provider = providers[selected.providerID] else { throw Error.missingProvider }
+        let requestID = UUID()
+        activeRequests[threadID] = requestID
+        pendingRequests.insert(requestID)
+        defer {
+            pendingRequests.remove(requestID)
+            if activeRequests[threadID] == requestID { activeRequests.removeValue(forKey: threadID) }
+        }
         let models = try await provider.availableModels()
+        guard activeRequests[threadID] == requestID else { throw Error.stopped }
         guard let thread = threads.first(where: { $0.id == threadID }),
               thread.providerID == selected.providerID, thread.modelID == selected.modelID else { throw Error.missingThread }
         guard let model = models.first(where: { $0.id == thread.modelID }) else { throw Error.missingModel }
-        guard activeRequests[threadID] == nil else { throw Error.busy }
         var seen = Set<UUID>()
         let imageIDs = attachmentIDs.filter { seen.insert($0).inserted }
         let images = try Dictionary(uniqueKeysWithValues: imageIDs.map { ($0, try attachments.load($0, threadID: threadID)) })
@@ -80,12 +97,11 @@ final class ChatCoordinator {
             : "Answer concisely in one to three sentences or a few short bullets.\n\n\(text)"
         let prompt = ContextBuilder.build(thread: updated, currentText: promptText, currentAttachmentIDs: imageIDs,
                                           contextWindowTokens: model.contextWindowTokens)
-        let request = GenerationRequest(id: UUID(), modelID: thread.modelID, messages: prompt, imageData: images)
+        let request = GenerationRequest(id: requestID, modelID: thread.modelID, messages: prompt, imageData: images)
         updated.messages.append(ChatMessage(role: .user, text: text, attachmentIDs: imageIDs))
         updated.messages.append(ChatMessage(role: .pet, text: "", status: .failed))
         try save(updated)
-        activeRequests[threadID] = request.id
-        defer { if activeRequests[threadID] == request.id { activeRequests.removeValue(forKey: threadID) } }
+        pendingRequests.remove(requestID)
         do {
             var completed = false
             for try await event in provider.stream(request) {
@@ -113,6 +129,11 @@ final class ChatCoordinator {
         guard let requestID = activeRequests[threadID],
               let index = threads.firstIndex(where: { $0.id == threadID }) else { return }
         var thread = threads[index]
+        if pendingRequests.contains(requestID) {
+            activeRequests.removeValue(forKey: threadID)
+            await providers[thread.providerID]?.cancel(requestID)
+            return
+        }
         thread.messages[thread.messages.count - 1].status = .stopped
         let saveResult = Result { try save(thread) }
         activeRequests.removeValue(forKey: threadID)

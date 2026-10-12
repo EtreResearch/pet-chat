@@ -316,6 +316,66 @@ final class ChatCoordinatorTests: XCTestCase {
         XCTAssertEqual(fixture.provider.requests.count, 1)
         XCTAssertEqual(model.attachmentIDs, [image])
     }
+
+    func testStopDuringModelDiscoveryPreventsLateGeneration() async throws {
+        let fixture = try Fixture()
+        let started = expectation(description: "model discovery started")
+        fixture.provider.holdModels = true
+        fixture.provider.onModels = { started.fulfill() }
+        let thread = try fixture.coordinator.newThread(providerID: .ollama, modelID: "text")
+        let send = Task { try await fixture.coordinator.send(text: "Question", attachmentIDs: [], threadID: thread.id) }
+        await fulfillment(of: [started], timeout: 2)
+
+        try await fixture.coordinator.stop(threadID: thread.id)
+        fixture.provider.modelsGate?.resume()
+        _ = try? await send.value
+
+        XCTAssertTrue(fixture.provider.requests.isEmpty)
+        XCTAssertEqual(try fixture.store.load().first?.messages, [])
+    }
+
+    func testStopDuringDiscoveryAllowsRetryBeforeOldLookupReturns() async throws {
+        let fixture = try Fixture()
+        let model = AppModel(coordinator: fixture.coordinator)
+        try model.select(providerID: .ollama, modelID: "text")
+        model.draft = "Earlier"
+        await model.submit()
+        let started = expectation(description: "old discovery started")
+        fixture.provider.holdModels = true
+        fixture.provider.onModels = { started.fulfill() }
+        model.draft = "Retry this"
+        let old = Task { await model.submit() }
+        await fulfillment(of: [started], timeout: 2)
+
+        await model.stop()
+        XCTAssertFalse(model.isLoading)
+        XCTAssertEqual(model.draft, "Retry this")
+        fixture.provider.holdModels = false
+        await model.retry()
+        fixture.provider.modelsGate?.resume()
+        await old.value
+
+        XCTAssertEqual(fixture.provider.requests.count, 2)
+        XCTAssertEqual(model.thread?.messages.map(\.text).filter { $0 == "Retry this" }.count, 1)
+        XCTAssertEqual(model.draft, "")
+    }
+
+    func testPostCommitAttachmentCleanupFailureCannotResurrectDeletedChat() async throws {
+        let fixture = try Fixture(removeItem: { _ in throw TestFailure.disk })
+        let thread = try fixture.coordinator.newThread(providerID: .ollama, modelID: "vision")
+        let image = try fixture.attachments.save(Data([1]), threadID: thread.id)
+
+        XCTAssertThrowsError(try fixture.coordinator.deleteThread(thread.id)) { XCTAssertTrue($0 is TestFailure) }
+        XCTAssertTrue(try fixture.store.load().isEmpty)
+        XCTAssertFalse(fixture.coordinator.threads.contains { $0.id == thread.id })
+        do {
+            try await fixture.coordinator.send(text: "Resurrect?", attachmentIDs: [], threadID: thread.id)
+            XCTFail("Deleted chat was sent")
+        } catch { XCTAssertTrue(fixture.provider.requests.isEmpty) }
+        XCTAssertTrue(FileManager.default.fileExists(atPath: fixture.directory
+            .appendingPathComponent(".pending-deletion").appendingPathComponent(thread.id.uuidString)
+            .appendingPathComponent(image.uuidString).path))
+    }
 }
 
 @MainActor private final class AuthGate {
@@ -342,8 +402,8 @@ private final class Fixture {
     let snapshots = SnapshotBox()
     lazy var coordinator = try! ChatCoordinator(providers: [.ollama: provider, .chatGPT: otherProvider], store: store, attachments: attachments)
 
-    init() throws {
-        attachments = AttachmentStore(root: directory)
+    init(removeItem: @escaping (URL) throws -> Void = { try FileManager.default.removeItem(at: $0) }) throws {
+        attachments = AttachmentStore(root: directory, removeItem: removeItem)
         let container = try ModelContainer(for: ChatRecord.self, MessageRecord.self,
                                            configurations: ModelConfiguration(isStoredInMemoryOnly: true))
         let snapshots = snapshots
