@@ -7,6 +7,27 @@ import XCTest
 
 @MainActor
 final class PetPanelTests: XCTestCase {
+    func testPetIsNativeButtonAndOwnsPointerHitTarget() throws {
+        let controller = PetPanelController(model: try makeModel(), defaults: UserDefaults(suiteName: UUID().uuidString)!, fullScreenProvider: { _ in false })
+        defer { controller.hidePet() }
+        controller.showPetOnly()
+        let view = try XCTUnwrap(controller.petPanel.contentView)
+        view.layoutSubtreeIfNeeded()
+        XCTAssertTrue(view.acceptsFirstMouse(for: nil))
+        XCTAssertEqual(view.accessibilityRole(), .button)
+        XCTAssertTrue(view.hitTest(NSPoint(x: 32, y: 32)) === view)
+        XCTAssertTrue(view.accessibilityPerformPress())
+        XCTAssertTrue(controller.chatPanel.isVisible)
+        controller.showPetOnly()
+        for type in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
+            let event = try XCTUnwrap(NSEvent.mouseEvent(with: type, location: NSPoint(x: 32, y: 32),
+                modifierFlags: [], timestamp: 0, windowNumber: controller.petPanel.windowNumber,
+                context: nil, eventNumber: 1, clickCount: 1, pressure: 1))
+            controller.petPanel.sendEvent(event)
+        }
+        XCTAssertTrue(controller.chatPanel.isVisible)
+    }
+
     func testSummonFocusesComposerAndEscapeAndClosePreserveDraft() async throws {
         let model = try makeModel()
         let controller = PetPanelController(model: model, defaults: UserDefaults(suiteName: UUID().uuidString)!)

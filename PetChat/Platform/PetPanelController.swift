@@ -289,6 +289,7 @@ private final class PetInteractionView: NSHostingView<PetSurface> {
     }
     @available(*, unavailable) required init?(coder: NSCoder) { fatalError() }
     @available(*, unavailable) required init(rootView: PetSurface) { fatalError() }
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
     override func mouseDown(with event: NSEvent) {
         startMouse = NSEvent.mouseLocation
         startOrigin = window?.frame.origin ?? .zero
@@ -301,6 +302,7 @@ private final class PetInteractionView: NSHostingView<PetSurface> {
         if dragged { onDrag(CGPoint(x: startOrigin.x + dx, y: startOrigin.y + dy)) }
     }
     override func mouseUp(with event: NSEvent) { if !dragged { onClick() } }
+    override func accessibilityRole() -> NSAccessibility.Role? { .button }
     override func accessibilityPerformPress() -> Bool { onClick(); return true }
 }
 

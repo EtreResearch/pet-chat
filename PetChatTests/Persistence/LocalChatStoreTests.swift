@@ -3,6 +3,24 @@ import XCTest
 @testable import PetChat
 
 final class LocalChatStoreTests: XCTestCase {
+    func testAppOwnedDiskStoreRestartsWithoutTouchingUnrelatedDefaultStore() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let sentinel = root.appendingPathComponent("default.store")
+        let unrelated = Data("unrelated application data".utf8)
+        try unrelated.write(to: sentinel)
+        let directory = root.appendingPathComponent("PetChat")
+        let thread = ChatThread(providerID: .ollama, modelID: "local")
+        try LocalChatStore(directory: directory).save(thread)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: directory.appendingPathComponent("Chats.store").path))
+        let reopened = try LocalChatStore(directory: directory)
+        XCTAssertEqual(try reopened.load(), [thread])
+        try reopened.delete(threadID: thread.id)
+        XCTAssertTrue(try LocalChatStore(directory: directory).load().isEmpty)
+        XCTAssertEqual(try Data(contentsOf: sentinel), unrelated)
+    }
+
     func testRestoresThreadAfterStoreRecreation() throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)

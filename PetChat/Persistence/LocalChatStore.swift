@@ -19,8 +19,13 @@ final class LocalChatStore {
         }
     }
 
-    convenience init() throws {
-        try self.init(container: ModelContainer(for: ChatRecord.self, MessageRecord.self), attachments: AttachmentStore())
+    convenience init(directory: URL? = nil) throws {
+        let directory = directory ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("PetChat", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let configuration = ModelConfiguration(url: directory.appendingPathComponent("Chats.store"))
+        try self.init(container: ModelContainer(for: ChatRecord.self, MessageRecord.self, configurations: configuration),
+                      attachments: AttachmentStore(root: directory.appendingPathComponent("Attachments")))
     }
 
     func load() throws -> [ChatThread] {
