@@ -9,17 +9,18 @@ final class LocalChatStoreTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: directory) }
         let configuration = ModelConfiguration(url: directory.appendingPathComponent("chats.store"))
         let container = try ModelContainer(for: ChatRecord.self, MessageRecord.self, configurations: configuration)
+        let attachments = AttachmentStore(root: directory.appendingPathComponent("Attachments"))
         var thread = ChatThread(providerID: .ollama, modelID: "vision", messages: [
             ChatMessage(role: .user, text: "What is here?", attachmentIDs: [UUID()]),
             ChatMessage(role: .pet, text: "A cat", status: .stopped)
         ])
 
-        try LocalChatStore(container: container).save(thread)
+        try LocalChatStore(container: container, attachments: attachments).save(thread)
         thread.messages[1].text = "A small cat"
-        try LocalChatStore(container: container).save(thread)
+        try LocalChatStore(container: container, attachments: attachments).save(thread)
 
         let reopened = try ModelContainer(for: ChatRecord.self, MessageRecord.self, configurations: configuration)
-        XCTAssertEqual(try LocalChatStore(container: reopened).load(), [thread])
+        XCTAssertEqual(try LocalChatStore(container: reopened, attachments: attachments).load(), [thread])
     }
 
     func testDeletesOnlySelectedThreadAndAttachments() throws {
@@ -44,13 +45,16 @@ final class LocalChatStoreTests: XCTestCase {
 
     func testFailedSaveDoesNotReportSuccess() throws {
         enum Failure: Error { case unavailable }
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let attachments = AttachmentStore(root: root)
         let container = try ModelContainer(for: ChatRecord.self, MessageRecord.self, configurations: ModelConfiguration(isStoredInMemoryOnly: true))
-        let store = try LocalChatStore(container: container, saveContext: { _ in throw Failure.unavailable })
+        let store = try LocalChatStore(container: container, attachments: attachments, saveContext: { _ in throw Failure.unavailable })
 
         XCTAssertThrowsError(try store.save(ChatThread(providerID: .ollama, modelID: "a"))) { error in
             XCTAssertTrue(error is Failure)
         }
-        XCTAssertTrue(try LocalChatStore(container: container).load().isEmpty)
+        XCTAssertTrue(try LocalChatStore(container: container, attachments: attachments).load().isEmpty)
     }
 
     func testFailedAttachmentCleanupIsReportedAndRetriedOnNextStore() throws {
@@ -72,6 +76,22 @@ final class LocalChatStoreTests: XCTestCase {
         XCTAssertTrue(try reopened.load().isEmpty)
         XCTAssertThrowsError(try AttachmentStore(root: root).load(image, threadID: thread.id))
         XCTAssertFalse(FileManager.default.fileExists(atPath: root.appendingPathComponent(".pending-deletion/").appendingPathComponent(thread.id.uuidString).path))
+    }
+
+    func testRetryingDeleteCannotReportSuccessWhileCleanupIsPending() throws {
+        enum Failure: Swift.Error { case diskUnavailable }
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let container = try ModelContainer(for: ChatRecord.self, MessageRecord.self, configurations: ModelConfiguration(isStoredInMemoryOnly: true))
+        let attachments = AttachmentStore(root: root, removeItem: { _ in throw Failure.diskUnavailable })
+        let thread = ChatThread(providerID: .ollama, modelID: "vision")
+        _ = try attachments.save(Data([7]), threadID: thread.id)
+        let store = try LocalChatStore(container: container, attachments: attachments)
+        try store.save(thread)
+
+        XCTAssertThrowsError(try store.delete(threadID: thread.id))
+        XCTAssertThrowsError(try store.delete(threadID: thread.id)) { XCTAssertTrue($0 is Failure) }
+        XCTAssertTrue(FileManager.default.fileExists(atPath: root.appendingPathComponent(".pending-deletion/").appendingPathComponent(thread.id.uuidString).path))
     }
 
     func testDatabaseDeleteFailureRestoresAttachments() throws {

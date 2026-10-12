@@ -8,7 +8,7 @@ final class LocalChatStore {
     private let attachments: AttachmentStore
     private let saveContext: (ModelContext) throws -> Void
 
-    init(container: ModelContainer, attachments: AttachmentStore = AttachmentStore(),
+    init(container: ModelContainer, attachments: AttachmentStore,
          saveContext: @escaping (ModelContext) throws -> Void = { try $0.save() }) throws {
         self.container = container
         self.attachments = attachments
@@ -20,7 +20,7 @@ final class LocalChatStore {
     }
 
     convenience init() throws {
-        try self.init(container: ModelContainer(for: ChatRecord.self, MessageRecord.self))
+        try self.init(container: ModelContainer(for: ChatRecord.self, MessageRecord.self), attachments: AttachmentStore())
     }
 
     func load() throws -> [ChatThread] {
@@ -55,6 +55,6 @@ final class LocalChatStore {
             if staged { try attachments.restoreDeletion(threadID: threadID) }
             throw error
         }
-        if staged { try attachments.finishDeletion(threadID: threadID) }
+        try attachments.finishDeletion(threadID: threadID)
     }
 }
