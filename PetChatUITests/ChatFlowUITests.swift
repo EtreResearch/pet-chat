@@ -167,6 +167,44 @@ final class ChatFlowUITests: IsolatedUITestCase {
         XCTAssertEqual(remaining, firstDirectories)
     }
 
+    func testChangeModelBackPreservesChatDraftAndImageAfterCloseAndEscape() throws {
+        openChat()
+        XCTAssertFalse(app.buttons["Back"].exists)
+        chooseModel()
+        send("Original conversation")
+        XCTAssertTrue(text("Answer 1: Original conversation").waitForExistence(timeout: 5))
+        app.textViews["Message"].click()
+        app.textViews["Message"].typeText("Keep this draft")
+        app.buttons["Capture area"].click()
+        XCTAssertTrue(app.buttons["Remove image"].waitForExistence(timeout: 3))
+        let attachments = fixtureRoot.appendingPathComponent("Attachments")
+        let originalThreads = try FileManager.default.contentsOfDirectory(atPath: attachments.path)
+            .filter { UUID(uuidString: $0) != nil }
+        XCTAssertEqual(originalThreads.count, 1)
+        for collapseWithEscape in [false, true] {
+            app.menuButtons["Chat"].click()
+            app.menuItems["Change model"].click()
+            XCTAssertTrue(app.buttons["Back"].waitForExistence(timeout: 3))
+            app.popUpButtons["Provider"].click()
+            app.menuItems["ChatGPT"].click()
+            if collapseWithEscape { app.typeKey(.escape, modifierFlags: []) }
+            else { app.buttons["Close"].click() }
+            XCTAssertFalse(app.buttons["Close"].exists)
+            summonChat()
+            XCTAssertTrue(app.buttons["Back"].waitForExistence(timeout: 3))
+            app.buttons["Back"].click()
+            XCTAssertTrue(app.textViews["Message"].waitForExistence(timeout: 3))
+            XCTAssertEqual(app.textViews["Message"].value as? String, "Keep this draft")
+            XCTAssertTrue(binding("Ollama · fixture-model").exists)
+            XCTAssertTrue(text("Answer 1: Original conversation").exists)
+            XCTAssertTrue(app.buttons["Remove image"].exists)
+            XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: attachments.path)
+                .filter { UUID(uuidString: $0) != nil }, originalThreads)
+        }
+        app.buttons["Send"].click()
+        XCTAssertTrue(text("Answer 3: 1 image received").waitForExistence(timeout: 5))
+    }
+
     func testProviderChangeStartsBoundNewChatAndRestoresIt() {
         openChat()
         chooseModel()

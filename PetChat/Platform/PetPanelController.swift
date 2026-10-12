@@ -257,7 +257,11 @@ private struct FloatingChatRootView: View {
         Group {
             if model.thread == nil || choosingModel {
                 VStack(spacing: 0) {
-                    HStack { Spacer(); Button("Close", action: onClose).accessibilityLabel("Close") }.padding(10)
+                    HStack {
+                        if model.thread != nil { Button("Back") { choosingModel = false } }
+                        Spacer()
+                        Button("Close", action: onClose).accessibilityLabel("Close")
+                    }.padding(10)
                     SetupView(model: model, onSelected: { choosingModel = false })
                     Spacer(minLength: 0)
                 }.frame(width: 340, height: 420)
