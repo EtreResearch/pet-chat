@@ -74,4 +74,29 @@ final class ContextBuilderTests: XCTestCase {
 
         XCTAssertEqual(request.imageData, [currentImage: Data([2])])
     }
+
+    func testRequestRejectsImageBytesWhenFinalPromptIsAssistant() {
+        let imageID = UUID()
+        let request = GenerationRequest(
+            id: UUID(), modelID: "vision",
+            messages: [PromptMessage(role: .assistant, text: "reply", attachmentIDs: [imageID])],
+            imageData: [imageID: Data([1])]
+        )
+
+        XCTAssertTrue(request.imageData.isEmpty)
+    }
+
+    func testCombiningMarksCannotMakeOldHistoryAppearCheap() {
+        let longUnicode = "a" + String(repeating: "\u{0301}", count: 12_000)
+        let thread = ChatThread(providerID: .ollama, modelID: "vision", messages: [
+            ChatMessage(role: .user, text: longUnicode),
+            ChatMessage(role: .pet, text: "old answer"),
+            ChatMessage(role: .user, text: "recent question"),
+            ChatMessage(role: .pet, text: "recent answer")
+        ])
+
+        let prompt = ContextBuilder.build(thread: thread, currentText: "now", currentAttachmentIDs: [], contextWindowTokens: nil)
+
+        XCTAssertEqual(prompt.map(\.text), ["recent question", "recent answer", "now"])
+    }
 }

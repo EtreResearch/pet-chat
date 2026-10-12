@@ -21,7 +21,7 @@ struct GenerationRequest {
         self.id = id
         self.modelID = modelID
         self.messages = messages
-        let currentIDs = Set(messages.last?.attachmentIDs ?? [])
+        let currentIDs = Set(messages.last?.role == .user ? messages.last?.attachmentIDs ?? [] : [])
         self.imageData = imageData.filter { currentIDs.contains($0.key) }
     }
 }

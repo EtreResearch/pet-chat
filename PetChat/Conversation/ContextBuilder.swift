@@ -32,7 +32,7 @@ enum ContextBuilder {
     }
 
     private static func estimate(_ text: String) -> Int {
-        // shortcut: character count approximates tokens; use provider-native tokenization when available.
-        (text.count + 2) / 3 + 8
+        // shortcut: UTF-8 byte count conservatively estimates tokens; use provider-native tokenization when available.
+        text.utf8.count + 8
     }
 }
