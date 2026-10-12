@@ -1,0 +1,72 @@
+import Foundation
+import XCTest
+@testable import PetChat
+
+final class OllamaStreamParserTests: XCTestCase {
+    func testTruncatedStreamThrowsWithoutCompletion() async throws {
+        MockOllamaURLProtocol.handler = { _ in
+            (200, Data((#"{"model":"text:latest","message":{"role":"assistant","content":"partial"},"done":false}"# + "\n").utf8))
+        }
+        defer { MockOllamaURLProtocol.handler = nil }
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [MockOllamaURLProtocol.self]
+        let provider = OllamaProvider(session: URLSession(configuration: configuration))
+        let request = GenerationRequest(id: UUID(), modelID: "text:latest", messages: [
+            PromptMessage(role: .user, text: "Hi", attachmentIDs: [])
+        ], imageData: [:])
+        var completed = false
+        do {
+            for try await event in provider.stream(request) {
+                if case .completed = event { completed = true }
+            }
+            XCTFail("Expected truncated stream error")
+        } catch {
+            XCTAssertFalse(completed)
+        }
+    }
+
+    func testMalformedAndReorderedTerminalEventsNeverComplete() async throws {
+        let invalidStreams = [
+            #"{"model":"text:latest","done":true}"# + "\n",
+            #"{"model":"text:latest","message":{"role":"assistant","content":""},"done":true}"# + "\n" +
+                #"{"model":"text:latest","message":{"role":"assistant","content":"late"},"done":false}"# + "\n",
+            #"{"model":"text:latest","message":{"role":"assistant","content":"ok"},"done":false}"# + "\n" + "not JSON\n"
+        ]
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [MockOllamaURLProtocol.self]
+        let provider = OllamaProvider(session: URLSession(configuration: configuration))
+        let request = GenerationRequest(id: UUID(), modelID: "text:latest", messages: [
+            PromptMessage(role: .user, text: "Hi", attachmentIDs: [])
+        ], imageData: [:])
+        defer { MockOllamaURLProtocol.handler = nil }
+        for stream in invalidStreams {
+            MockOllamaURLProtocol.handler = { _ in (200, Data(stream.utf8)) }
+            var completed = false
+            do {
+                for try await event in provider.stream(request) {
+                    if case .completed = event { completed = true }
+                }
+                XCTFail("Expected invalid stream error")
+            } catch {
+                XCTAssertFalse(completed)
+            }
+        }
+    }
+
+    func testOversizedLineFailsBeforeCompletion() async throws {
+        MockOllamaURLProtocol.handler = { _ in (200, Data(repeating: 65, count: 1_048_577)) }
+        defer { MockOllamaURLProtocol.handler = nil }
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [MockOllamaURLProtocol.self]
+        let provider = OllamaProvider(session: URLSession(configuration: configuration))
+        let request = GenerationRequest(id: UUID(), modelID: "text:latest", messages: [
+            PromptMessage(role: .user, text: "Hi", attachmentIDs: [])
+        ], imageData: [:])
+        do {
+            for try await _ in provider.stream(request) {}
+            XCTFail("Expected oversized line error")
+        } catch {
+            XCTAssertTrue(error.localizedDescription.localizedCaseInsensitiveContains("oversized"))
+        }
+    }
+}

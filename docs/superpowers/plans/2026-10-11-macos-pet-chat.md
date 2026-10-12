@@ -110,11 +110,11 @@
 - `OllamaProvider` conforms to `ChatProvider`; default endpoint is `http://localhost:11434`.
 - List installed models, determine image capability/context metadata using Ollama's model details, send the current prompt plus `images` only for image-capable models, and parse the `/api/chat` newline-delimited JSON stream. Each delta emits `.textDelta`; only a valid terminal response emits `.completed`.
 
-- [ ] **Step 1: Add failing URLProtocol-backed tests** — `testListsInstalledModels`, `testRejectsImagesForTextOnlyModel`, `testEmitsOrderedDeltasAndCompletion`, `testTruncatedStreamThrowsWithoutCompletion`, and `testCancelStopsUnderlyingRequest`.
-- [ ] **Step 2: Run the Ollama provider tests and confirm the transport/stream assertions fail.**
-- [ ] **Step 3: Implement `OllamaProvider`** using URLSession, bounded JSON-line parsing, cancellation propagation, and local model details; never assume every installed model accepts images.
-- [ ] **Step 4: Rerun the Ollama tests and confirm all pass.**
-- [ ] **Step 5: Commit** `feat: add streaming Ollama provider`.
+- [x] **Step 1: Add failing URLProtocol-backed tests** — `testListsInstalledModels`, `testRejectsImagesForTextOnlyModel`, `testEmitsOrderedDeltasAndCompletion`, `testTruncatedStreamThrowsWithoutCompletion`, and `testCancelStopsUnderlyingRequest`.
+- [x] **Step 2: Run the Ollama provider tests and confirm the transport/stream assertions fail.**
+- [x] **Step 3: Implement `OllamaProvider`** using URLSession, bounded JSON-line parsing, cancellation propagation, and local model details; never assume every installed model accepts images.
+- [x] **Step 4: Rerun the Ollama tests and confirm all pass.**
+- [x] **Step 5: Commit** `feat: add streaming Ollama provider`.
 
 ### Task 5: Implement direct ChatGPT sign-in and streaming provider
 
