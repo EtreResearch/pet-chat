@@ -219,7 +219,7 @@ final class OllamaProviderTests: XCTestCase {
         await fulfillment(of: [started], timeout: 2)
         await provider.cancel(id)
         await fulfillment(of: [stopped], timeout: 2)
-        _ = try? await consumer.value
+        do { try await consumer.value; XCTFail("Cancelled generation must terminate with an error") } catch {}
     }
 
     private func provider() -> OllamaProvider {
@@ -257,6 +257,7 @@ final class MockOllamaURLProtocol: URLProtocol {
     }
 
     override func stopLoading() {
+        guard request.url?.path == "/api/chat" else { return }
         let expectation = Self.stopLock.withLock {
             let expectation = Self.stopped
             Self.stopped = nil
