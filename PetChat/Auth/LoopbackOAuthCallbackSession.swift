@@ -5,7 +5,18 @@ import Foundation
 final class LoopbackOAuthCallbackSession: OAuthCallbackSession, @unchecked Sendable {
     private let lock = NSLock()
     private var listener: Int32 = -1
+    private var acceptedPeer: Int32 = -1
     private var redirectURI: URL?
+    private var cancelled = false
+    private let openBrowser: @Sendable (URL) async -> Bool
+    private let headerReadTimeout: TimeInterval
+
+    init(headerReadTimeout: TimeInterval = 10, openBrowser: @escaping @Sendable (URL) async -> Bool = { url in
+        await MainActor.run { NSWorkspace.shared.open(url) }
+    }) {
+        self.headerReadTimeout = headerReadTimeout
+        self.openBrowser = openBrowser
+    }
 
     func start() throws -> URL {
         let fd = socket(AF_INET, SOCK_STREAM, 0)
@@ -36,6 +47,7 @@ final class LoopbackOAuthCallbackSession: OAuthCallbackSession, @unchecked Senda
             if listener >= 0 { close(listener) }
             listener = fd
             redirectURI = url
+            cancelled = false
         }
         return url
     }
@@ -43,9 +55,13 @@ final class LoopbackOAuthCallbackSession: OAuthCallbackSession, @unchecked Senda
     func receive(authorizationURL: URL) async throws -> URL {
         guard authorizationURL.scheme == "https", authorizationURL.host == "auth.openai.com",
               authorizationURL.path == "/api/accounts/authorize", authorizationURL.port == nil,
-              await MainActor.run(body: { NSWorkspace.shared.open(authorizationURL) }) else {
+              await openBrowser(authorizationURL) else {
             closeListener()
             throw ChatGPTError.signInFailed
+        }
+        do { try Task.checkCancellation() } catch {
+            closeListener()
+            throw error
         }
         return try await withTaskCancellationHandler {
             defer { closeListener() }
@@ -56,19 +72,31 @@ final class LoopbackOAuthCallbackSession: OAuthCallbackSession, @unchecked Senda
     }
 
     private func acceptCallback() throws -> URL {
-        let fd = lock.withLock { listener }
-        guard fd >= 0, let redirectURI = lock.withLock({ self.redirectURI }) else { throw ChatGPTError.signInFailed }
-        var descriptor = pollfd(fd: fd, events: Int16(POLLIN), revents: 0)
-        guard poll(&descriptor, 1, 300_000) > 0, descriptor.revents & Int16(POLLIN) != 0 else {
-            throw ChatGPTError.signInFailed
-        }
+        let (fd, redirectURI) = lock.withLock { (listener, self.redirectURI) }
+        guard fd >= 0, let redirectURI else { throw ChatGPTError.signInFailed }
+        try waitUntilReadable(fd, deadline: DispatchTime.now().uptimeNanoseconds + 300_000_000_000)
         let peer = accept(fd, nil, nil)
         guard peer >= 0 else { throw ChatGPTError.signInFailed }
-        defer { close(peer) }
+        let wasCancelled = lock.withLock { () -> Bool in
+            if cancelled { return true }
+            acceptedPeer = peer
+            return false
+        }
+        if wasCancelled { close(peer); throw ChatGPTError.signInFailed }
+        defer {
+            lock.withLock {
+                if acceptedPeer == peer { acceptedPeer = -1 }
+                close(peer)
+            }
+        }
+        guard fcntl(peer, F_SETFL, O_NONBLOCK) == 0 else { throw ChatGPTError.signInFailed }
         var request = Data()
         var bytes = [UInt8](repeating: 0, count: 1024)
+        let deadline = DispatchTime.now().uptimeNanoseconds + UInt64(max(0, headerReadTimeout) * 1_000_000_000)
         while request.count <= 8_192 {
+            try waitUntilReadable(peer, deadline: deadline)
             let count = recv(peer, &bytes, bytes.count, 0)
+            if count < 0 && (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR) { continue }
             guard count > 0 else { throw ChatGPTError.signInFailed }
             request.append(contentsOf: bytes[..<count])
             if request.range(of: Data("\r\n\r\n".utf8)) != nil { break }
@@ -86,8 +114,25 @@ final class LoopbackOAuthCallbackSession: OAuthCallbackSession, @unchecked Senda
         return callback
     }
 
+    private func waitUntilReadable(_ fd: Int32, deadline: UInt64) throws {
+        while DispatchTime.now().uptimeNanoseconds < deadline {
+            if lock.withLock({ cancelled }) { throw ChatGPTError.signInFailed }
+            var descriptor = pollfd(fd: fd, events: Int16(POLLIN), revents: 0)
+            let result = poll(&descriptor, 1, 100)
+            if result > 0 {
+                guard descriptor.revents & Int16(POLLIN) != 0 else { throw ChatGPTError.signInFailed }
+                if lock.withLock({ cancelled }) { throw ChatGPTError.signInFailed }
+                return
+            }
+            if result < 0 && errno != EINTR { throw ChatGPTError.signInFailed }
+        }
+        throw ChatGPTError.signInFailed
+    }
+
     private func closeListener() {
         lock.withLock {
+            cancelled = true
+            if acceptedPeer >= 0 { shutdown(acceptedPeer, SHUT_RDWR) }
             if listener >= 0 { shutdown(listener, SHUT_RDWR); close(listener); listener = -1 }
             redirectURI = nil
         }

@@ -1,4 +1,5 @@
 import CryptoKit
+import Darwin
 import Foundation
 import Security
 import XCTest
@@ -110,6 +111,101 @@ final class ChatGPTOAuthClientTests: XCTestCase {
         XCTAssertTrue(a.accessToken == b.accessToken && a.refreshToken == b.refreshToken && a.idToken == b.idToken)
         XCTAssertEqual(fixture.refreshRequestCount, 1)
     }
+
+    func testRefreshCannotOverwriteReauthorizedCredential() async throws {
+        let fixture = OAuthFixture(refreshDelay: true)
+        defer { fixture.cleanup() }
+        let old = fixture.oldCredential
+        try fixture.store.save(old, accountID: old.accountID)
+        try fixture.store.select(accountID: old.accountID)
+        let started = expectation(description: "refresh request started")
+        fixture.refreshStarted = started
+        let client = fixture.client
+        let pending = Task { try? await client.credential() }
+        await fulfillment(of: [started], timeout: 2)
+
+        let replacement = ChatGPTCredential(subject: old.subject, clientID: old.clientID, hostID: old.hostID,
+            email: old.email, idToken: "replacement-id", accessToken: "replacement-access",
+            refreshToken: "replacement-refresh", scopes: old.scopes,
+            expiresAt: Date().addingTimeInterval(3600))
+        try fixture.store.save(replacement, accountID: old.accountID)
+        _ = await pending.value
+        XCTAssertTrue(try fixture.store.load(accountID: old.accountID) == replacement)
+    }
+
+    func testRefreshCannotResurrectDeletedCredential() async throws {
+        let fixture = OAuthFixture(refreshDelay: true)
+        defer { fixture.cleanup() }
+        let old = fixture.oldCredential
+        try fixture.store.save(old, accountID: old.accountID)
+        try fixture.store.select(accountID: old.accountID)
+        let started = expectation(description: "refresh request started")
+        fixture.refreshStarted = started
+        let client = fixture.client
+        let pending = Task { try? await client.credential() }
+        await fulfillment(of: [started], timeout: 2)
+
+        try fixture.store.delete(accountID: old.accountID)
+        _ = await pending.value
+        XCTAssertNil(try fixture.store.load(accountID: old.accountID))
+        XCTAssertNil(try fixture.store.activeAccountID())
+    }
+
+    func testCancelledLoopbackCallbackStopsReadingIncompletePeer() async throws {
+        let callback = LoopbackOAuthCallbackSession(openBrowser: { _ in true })
+        let redirect = try callback.start()
+        let finished = expectation(description: "cancelled callback completed")
+        let pending = Task {
+            _ = try? await callback.receive(authorizationURL: URL(string: "https://auth.openai.com/api/accounts/authorize")!)
+            finished.fulfill()
+        }
+        let peer = socket(AF_INET, SOCK_STREAM, 0)
+        XCTAssertGreaterThanOrEqual(peer, 0)
+        defer { close(peer); pending.cancel() }
+        var address = sockaddr_in()
+        address.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
+        address.sin_family = sa_family_t(AF_INET)
+        address.sin_port = UInt16(redirect.port!).bigEndian
+        address.sin_addr.s_addr = inet_addr("127.0.0.1")
+        let connected = withUnsafePointer(to: &address) {
+            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                connect(peer, $0, socklen_t(MemoryLayout<sockaddr_in>.size))
+            }
+        }
+        XCTAssertEqual(connected, 0)
+        let incomplete = Data("GET /auth/callback?code=x HTTP/1.1\r\nHost: 127.0.0.1\r\n".utf8)
+        XCTAssertEqual(incomplete.withUnsafeBytes { send(peer, $0.baseAddress, incomplete.count, 0) }, incomplete.count)
+        try await Task.sleep(for: .milliseconds(100))
+        pending.cancel()
+        await fulfillment(of: [finished], timeout: 2)
+    }
+
+    func testIncompleteLoopbackHeadersExpireWithoutPeerDisconnecting() async throws {
+        let callback = LoopbackOAuthCallbackSession(headerReadTimeout: 0.2, openBrowser: { _ in true })
+        let redirect = try callback.start()
+        let finished = expectation(description: "incomplete callback expired")
+        let pending = Task {
+            _ = try? await callback.receive(authorizationURL: URL(string: "https://auth.openai.com/api/accounts/authorize")!)
+            finished.fulfill()
+        }
+        let peer = socket(AF_INET, SOCK_STREAM, 0)
+        XCTAssertGreaterThanOrEqual(peer, 0)
+        defer { close(peer); pending.cancel() }
+        var address = sockaddr_in()
+        address.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
+        address.sin_family = sa_family_t(AF_INET)
+        address.sin_port = UInt16(redirect.port!).bigEndian
+        address.sin_addr.s_addr = inet_addr("127.0.0.1")
+        let connected = withUnsafePointer(to: &address) {
+            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                connect(peer, $0, socklen_t(MemoryLayout<sockaddr_in>.size))
+            }
+        }
+        XCTAssertEqual(connected, 0)
+        let incomplete = Data("GET /auth/callback?code=x HTTP/1.1\r\n".utf8)
+        XCTAssertEqual(incomplete.withUnsafeBytes { send(peer, $0.baseAddress, incomplete.count, 0) }, incomplete.count)
+        await fulfillment(of: [finished], timeout: 2)
+    }
 }
 
 private final class OAuthFixture: @unchecked Sendable {
@@ -126,6 +222,7 @@ private final class OAuthFixture: @unchecked Sendable {
     let rejection: Rejection?
     let addingAccount: Bool
     let refreshDelay: Bool
+    var refreshStarted: XCTestExpectation?
     private let refreshLock = NSLock()
     private var refreshRequests = 0
     var refreshRequestCount: Int { refreshLock.withLock { refreshRequests } }
@@ -207,6 +304,7 @@ private final class OAuthFixture: @unchecked Sendable {
         XCTAssertEqual(field("resource"), "https://api.openai.com/v1")
         if field("grant_type") == "refresh_token" {
             refreshLock.withLock { refreshRequests += 1 }
+            refreshStarted?.fulfill()
             if refreshDelay { Thread.sleep(forTimeInterval: 0.2) }
             XCTAssertTrue(field("refresh_token") == "synthetic-old-refresh")
             XCTAssertNil(field("scope"))

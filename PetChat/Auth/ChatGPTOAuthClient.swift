@@ -134,7 +134,7 @@ actor ChatGPTOAuthClient {
         guard identity.subject == current.subject else { throw ChatGPTError.invalidIdentity }
         let renewed = try makeCredential(tokens: tokens, identity: identity, clientID: current.clientID, hostID: current.hostID)
         try Task.checkCancellation()
-        try store.save(renewed, accountID: accountID)
+        try store.replace(renewed, ifCurrent: current, accountID: accountID)
         return renewed
     }
 

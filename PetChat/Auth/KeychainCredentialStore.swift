@@ -2,11 +2,14 @@ import Foundation
 import Security
 
 final class KeychainCredentialStore: @unchecked Sendable {
+    private static let lock = NSRecursiveLock()
     private let service: String
 
     init(service: String = "com.etre.pet-chat.chatgpt") { self.service = service }
 
     func load(accountID: String) throws -> ChatGPTCredential? {
+        Self.lock.lock()
+        defer { Self.lock.unlock() }
         guard let data = try read("credential:\(accountID)") else { return nil }
         guard let credential = try? JSONDecoder().decode(ChatGPTCredential.self, from: data),
               credential.accountID == accountID else { throw ChatGPTError.invalidIdentity }
@@ -14,26 +17,44 @@ final class KeychainCredentialStore: @unchecked Sendable {
     }
 
     func save(_ credential: ChatGPTCredential, accountID: String) throws {
+        Self.lock.lock()
+        defer { Self.lock.unlock() }
         guard credential.accountID == accountID else { throw ChatGPTError.invalidIdentity }
         try write(JSONEncoder().encode(credential), key: "credential:\(accountID)")
     }
 
+    func replace(_ credential: ChatGPTCredential, ifCurrent expected: ChatGPTCredential, accountID: String) throws {
+        Self.lock.lock()
+        defer { Self.lock.unlock() }
+        guard try activeAccountID() == accountID,
+              try load(accountID: accountID) == expected else { throw ChatGPTError.invalidIdentity }
+        try save(credential, accountID: accountID)
+    }
+
     func delete(accountID: String) throws {
+        Self.lock.lock()
+        defer { Self.lock.unlock() }
         try remove("credential:\(accountID)")
         if try activeAccountID() == accountID { try remove("active-account") }
     }
 
     func activeAccountID() throws -> String? {
+        Self.lock.lock()
+        defer { Self.lock.unlock() }
         guard let data = try read("active-account"), let id = String(data: data, encoding: .utf8) else { return nil }
         return id
     }
 
     func select(accountID: String) throws {
+        Self.lock.lock()
+        defer { Self.lock.unlock() }
         guard try load(accountID: accountID) != nil else { throw ChatGPTError.noAccount }
         try write(Data(accountID.utf8), key: "active-account")
     }
 
     func hostID() throws -> String {
+        Self.lock.lock()
+        defer { Self.lock.unlock() }
         if let data = try read("host-id"), let id = String(data: data, encoding: .utf8), !id.isEmpty { return id }
         let id = "urn:uuid:\(UUID().uuidString.lowercased())"
         try write(Data(id.utf8), key: "host-id")
