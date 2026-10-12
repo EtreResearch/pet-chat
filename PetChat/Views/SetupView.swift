@@ -33,10 +33,16 @@ struct SetupView: View {
                 do { try model.select(providerID: providerID, modelID: modelID); onSelected() }
                 catch { model.report(error) }
             }
-            .disabled(modelID.isEmpty)
+            .disabled(!model.models.contains { $0.id == modelID })
         }
         .padding(20)
         .frame(width: 340)
-        .task { await model.loadModels(for: providerID) }
+        .task {
+            providerID = model.selectedProviderID
+            await model.loadModels(for: providerID)
+            if model.models.contains(where: { $0.id == model.selectedModelID }) {
+                modelID = model.selectedModelID
+            }
+        }
     }
 }

@@ -4,7 +4,8 @@ import Observation
 @MainActor @Observable
 final class AppModel {
     let coordinator: ChatCoordinator
-    private let auth: ChatGPTOAuthClient
+    private let defaults: UserDefaults
+    private let signIn: @MainActor () async throws -> Void
     private(set) var currentThreadID: UUID?
     private(set) var selectedProviderID: ProviderID = .ollama
     private(set) var selectedModelID = ""
@@ -16,14 +17,26 @@ final class AppModel {
     private var modelLoadID: UUID?
 
     var thread: ChatThread? { coordinator.threads.first { $0.id == currentThreadID } }
+    var excludedMessageIDs: Set<UUID> {
+        guard let thread else { return [] }
+        let contextWindow = models.first { $0.id == thread.modelID }?.contextWindowTokens
+        let included = ContextBuilder.includedHistoryIDs(thread: thread, currentText: draft,
+                                                         contextWindowTokens: contextWindow)
+        return Set(thread.messages.map(\.id)).subtracting(included)
+    }
 
-    init(coordinator: ChatCoordinator, auth: ChatGPTOAuthClient = ChatGPTOAuthClient()) {
+    init(coordinator: ChatCoordinator, auth: ChatGPTOAuthClient = ChatGPTOAuthClient(),
+         defaults: UserDefaults = .standard, signIn: (@MainActor () async throws -> Void)? = nil) {
         self.coordinator = coordinator
-        self.auth = auth
+        self.defaults = defaults
+        self.signIn = signIn ?? { _ = try await auth.signIn() }
         if let last = coordinator.threads.last {
             currentThreadID = last.id
             selectedProviderID = last.providerID
             selectedModelID = last.modelID
+        } else {
+            selectedProviderID = ProviderID(rawValue: defaults.string(forKey: "PetChat.selectedProviderID") ?? "") ?? .ollama
+            selectedModelID = defaults.string(forKey: "PetChat.selectedModelID") ?? ""
         }
     }
 
@@ -42,10 +55,16 @@ final class AppModel {
     }
 
     func connectChatGPT() async {
+        let connectID = UUID()
+        modelLoadID = connectID
+        models = []
         do {
-            _ = try await auth.signIn()
+            try await signIn()
+            guard modelLoadID == connectID else { return }
             await loadModels(for: .chatGPT)
-        } catch { errorMessage = error.localizedDescription }
+        } catch {
+            if modelLoadID == connectID { errorMessage = error.localizedDescription }
+        }
     }
 
     func select(providerID: ProviderID, modelID: String) throws {
@@ -54,6 +73,8 @@ final class AppModel {
         currentThreadID = new.id
         selectedProviderID = providerID
         selectedModelID = modelID
+        defaults.set(providerID.rawValue, forKey: "PetChat.selectedProviderID")
+        defaults.set(modelID, forKey: "PetChat.selectedModelID")
         draft = ""
         attachmentIDs = []
         errorMessage = nil

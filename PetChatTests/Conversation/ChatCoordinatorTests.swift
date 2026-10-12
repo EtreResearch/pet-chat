@@ -242,6 +242,66 @@ final class ChatCoordinatorTests: XCTestCase {
         XCTAssertTrue(followup.messages.last?.text.contains("more detail") == true)
         XCTAssertEqual(model.thread?.messages.count, 4)
     }
+
+    func testAppModelIdentifiesOlderVisibleMessagesOutsideContext() async throws {
+        let fixture = try Fixture()
+        fixture.provider.contextWindowTokens = 1100
+        let oldUser = ChatMessage(role: .user, text: String(repeating: "a", count: 100))
+        let oldPet = ChatMessage(role: .pet, text: String(repeating: "b", count: 100))
+        let recentUser = ChatMessage(role: .user, text: "recent question")
+        let recentPet = ChatMessage(role: .pet, text: "recent answer")
+        try fixture.store.save(ChatThread(providerID: .ollama, modelID: "text",
+                                          messages: [oldUser, oldPet, recentUser, recentPet]))
+        let model = AppModel(coordinator: try ChatCoordinator(providers: [.ollama: fixture.provider],
+                                                               store: fixture.store, attachments: fixture.attachments))
+        await model.loadModels(for: .ollama)
+
+        XCTAssertEqual(model.excludedMessageIDs, [oldUser.id, oldPet.id])
+    }
+
+    func testLastSelectedPairSurvivesDeletingFinalChat() throws {
+        let fixture = try Fixture()
+        let suiteName = "PetChatTests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let model = AppModel(coordinator: fixture.coordinator, defaults: defaults)
+        try model.select(providerID: .chatGPT, modelID: "gpt")
+        try model.deleteCurrentChat()
+
+        let restored = AppModel(coordinator: try ChatCoordinator(providers: [.chatGPT: fixture.otherProvider],
+                                                                  store: fixture.store, attachments: fixture.attachments),
+                                defaults: defaults)
+        try restored.newChat()
+        XCTAssertEqual(restored.thread?.providerID, .chatGPT)
+        XCTAssertEqual(restored.thread?.modelID, "gpt")
+    }
+
+    func testLateChatGPTConnectionCannotReplaceOllamaCatalog() async throws {
+        let fixture = try Fixture()
+        let gate = AuthGate()
+        let started = expectation(description: "sign-in started")
+        gate.onStart = { started.fulfill() }
+        let model = AppModel(coordinator: fixture.coordinator, signIn: { await gate.wait() })
+        let connecting = Task { await model.connectChatGPT() }
+        await fulfillment(of: [started], timeout: 2)
+
+        await model.loadModels(for: .ollama)
+        gate.resume()
+        await connecting.value
+        XCTAssertEqual(model.models.map(\.id), ["text"])
+    }
+}
+
+@MainActor private final class AuthGate {
+    var onStart: (() -> Void)?
+    private var continuation: CheckedContinuation<Void, Never>?
+    func wait() async {
+        await withCheckedContinuation { continuation in
+            self.continuation = continuation
+            onStart?()
+        }
+    }
+    func resume() { continuation?.resume() }
 }
 
 private enum TestFailure: Error { case disconnected, disk }
@@ -288,6 +348,7 @@ private final class ScriptedProvider: ChatProvider, @unchecked Sendable {
     var onModels: (() -> Void)?
     var modelsGate: CheckedContinuation<Void, Never>?
     var cancelled = false
+    var contextWindowTokens = 4096
 
     init(id: ProviderID) { providerID = id }
     func availableModels() async throws -> [ProviderModel] {
@@ -297,7 +358,7 @@ private final class ScriptedProvider: ChatProvider, @unchecked Sendable {
                 onModels?()
             }
         }
-        return [ProviderModel(id: providerID == .ollama ? "text" : "gpt", displayName: "Test", supportsImages: true, contextWindowTokens: 4096)]
+        return [ProviderModel(id: providerID == .ollama ? "text" : "gpt", displayName: "Test", supportsImages: true, contextWindowTokens: contextWindowTokens)]
     }
     func stream(_ request: GenerationRequest) -> AsyncThrowingStream<GenerationEvent, Error> {
         requests.append(request)

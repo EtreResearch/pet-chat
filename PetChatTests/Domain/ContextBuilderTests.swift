@@ -99,4 +99,19 @@ final class ContextBuilderTests: XCTestCase {
 
         XCTAssertEqual(prompt.map(\.text), ["recent question", "recent answer", "now"])
     }
+
+    func testReportsWhichVisibleMessagesAreOutsideCurrentContext() {
+        let oldUser = ChatMessage(role: .user, text: String(repeating: "a", count: 100))
+        let oldPet = ChatMessage(role: .pet, text: String(repeating: "b", count: 100))
+        let recentUser = ChatMessage(role: .user, text: "recent question")
+        let recentPet = ChatMessage(role: .pet, text: "recent answer")
+        let thread = ChatThread(providerID: .ollama, modelID: "tiny",
+                                messages: [oldUser, oldPet, recentUser, recentPet])
+
+        let included = ContextBuilder.includedHistoryIDs(thread: thread, currentText: "now", contextWindowTokens: 1100)
+
+        XCTAssertEqual(included, [recentUser.id, recentPet.id])
+        XCTAssertFalse(included.contains(oldUser.id))
+        XCTAssertFalse(included.contains(oldPet.id))
+    }
 }

@@ -32,7 +32,8 @@ struct ChatPanelView: View {
                 ScrollView {
                     LazyVStack(spacing: 8) {
                         ForEach(model.thread?.messages ?? []) { message in
-                            MessageRowView(message: message).id(message.id)
+                            MessageRowView(message: message, outsideContext: model.excludedMessageIDs.contains(message.id))
+                                .id(message.id)
                         }
                         if model.isLoading {
                             ProgressView("Thinking").frame(maxWidth: .infinity, alignment: .leading)
@@ -42,6 +43,11 @@ struct ChatPanelView: View {
                 }
                 .onChange(of: model.thread?.messages.last?.text) { _, _ in
                     if let id = model.thread?.messages.last?.id { proxy.scrollTo(id, anchor: .bottom) }
+                }
+                .onAppear {
+                    if let id = model.thread?.messages.last?.id {
+                        Task { @MainActor in proxy.scrollTo(id, anchor: .bottom) }
+                    }
                 }
             }
             if let error = model.errorMessage {
@@ -63,5 +69,6 @@ struct ChatPanelView: View {
             ComposerView(model: model)
         }
         .frame(width: 340, height: 420)
+        .task(id: model.thread?.id) { await model.loadModels(for: model.selectedProviderID) }
     }
 }

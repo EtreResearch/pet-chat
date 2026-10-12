@@ -2,6 +2,7 @@ import SwiftUI
 
 struct MessageRowView: View {
     let message: ChatMessage
+    let outsideContext: Bool
 
     var body: some View {
         VStack(alignment: .leading, spacing: 3) {
@@ -13,6 +14,11 @@ struct MessageRowView: View {
             }
             if message.role == .pet && message.status != .complete {
                 Text(message.status == .stopped ? "Stopped" : "Interrupted")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            if outsideContext {
+                Text("Outside current model context")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
