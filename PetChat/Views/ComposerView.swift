@@ -1,7 +1,9 @@
+import AppKit
 import SwiftUI
 
 struct ComposerView: View {
     @Bindable var model: AppModel
+    @FocusState private var isFocused: Bool
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -11,6 +13,8 @@ struct ComposerView: View {
                     .accessibilityLabel("\(model.attachmentIDs.count) image attached")
             }
             TextEditor(text: $model.draft)
+                .focused($isFocused)
+                .onAppear { if NSApp.isActive { isFocused = true } }
                 .frame(height: 58)
                 .accessibilityLabel("Message")
             HStack {

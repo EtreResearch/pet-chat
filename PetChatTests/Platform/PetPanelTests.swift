@@ -17,11 +17,16 @@ final class PetPanelTests: XCTestCase {
         try await Task.sleep(for: .milliseconds(200))
         XCTAssertTrue(controller.chatPanel.isVisible)
         XCTAssertTrue(controller.chatPanel.firstResponder is NSTextView)
-        controller.chatPanel.cancelOperation(nil)
+        let escape = try XCTUnwrap(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [],
+                                                   timestamp: 0, windowNumber: controller.chatPanel.windowNumber, context: nil,
+                                                   characters: "\u{1b}", charactersIgnoringModifiers: "\u{1b}",
+                                                   isARepeat: false, keyCode: 53))
+        controller.chatPanel.sendEvent(escape)
         XCTAssertFalse(controller.chatPanel.isVisible)
         XCTAssertEqual(model.draft, "Keep this question")
         controller.showChat()
-        controller.collapseChat(preservingDraft: true)
+        controller.chatPanel.close()
+        XCTAssertFalse(controller.chatPanel.isVisible)
         XCTAssertEqual(model.draft, "Keep this question")
     }
 
@@ -121,14 +126,25 @@ final class PetPanelTests: XCTestCase {
         XCTAssertEqual(summonedCatalogCalls, 1)
     }
 
-    private func makeModel(provider: PanelTestProvider = PanelTestProvider()) throws -> AppModel {
+    func testFinishingSetupFocusesComposer() async throws {
+        let model = try makeModel(selectModel: false)
+        let panel = PetPanelController(model: model, defaults: UserDefaults(suiteName: UUID().uuidString)!)
+        defer { panel.hidePet() }
+        panel.showChat()
+        try await Task.sleep(for: .milliseconds(150))
+        try model.select(providerID: .ollama, modelID: "test")
+        try await Task.sleep(for: .milliseconds(150))
+        XCTAssertTrue(panel.chatPanel.firstResponder is NSTextView)
+    }
+
+    private func makeModel(provider: PanelTestProvider = PanelTestProvider(), selectModel: Bool = true) throws -> AppModel {
         let attachments = AttachmentStore(root: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString))
         let container = try ModelContainer(for: ChatRecord.self, MessageRecord.self,
                                            configurations: ModelConfiguration(isStoredInMemoryOnly: true))
         let store = try LocalChatStore(container: container, attachments: attachments)
         let coordinator = try ChatCoordinator(providers: [.ollama: provider], store: store, attachments: attachments)
         let model = AppModel(coordinator: coordinator, defaults: UserDefaults(suiteName: UUID().uuidString)!)
-        try model.select(providerID: .ollama, modelID: "test")
+        if selectModel { try model.select(providerID: .ollama, modelID: "test") }
         return model
     }
 }
