@@ -135,13 +135,13 @@
 - `OpenAIPlanProvider` conforms to `ChatProvider`; fetch the signed-in account's model catalog from `GET https://api.openai.com/v1/models`, show only entries with `visibility == "list"`, and use each model's `slug` and `display_name`. Send required thread context to `POST https://api.openai.com/v1/responses` with `store: false` and `stream: true`, parse SSE text deltas and terminal events, and cancel by closing the request task. Never use ChatGPT `backend-api` endpoints or HTTP previous-response continuation. Follow the current [models and inference guide](https://developers.openai.com/siwc/token-sharing-open-source/models-and-inference).
 - Tokens, authorization codes, PKCE verifiers, and callback query strings never appear in user-facing errors, test output, or logs.
 
-- [ ] **Step 1: Add failing fixture-based OAuth tests** — valid registration and refresh; wrong state/nonce; expired and wrong-audience ID tokens; missing granted scope; account mismatch; and a rejected callback leaving the previous Keychain item unchanged.
-- [ ] **Step 2: Add failing provider stream tests** — text/image payload selection, ordered SSE deltas, failed/completed event handling, missing model access, and request cancellation. Use fake token responses; never use a real ChatGPT token in automated tests.
-- [ ] **Step 3: Run the auth/provider tests and confirm each security or stream assertion fails.**
-- [ ] **Step 4: Implement OAuth validation with Apple Security/CryptoKit primitives, Keychain storage, token refresh, and the streaming Responses provider.**
-- [ ] **Step 5: Rerun auth/provider tests and confirm all pass without token material in output.**
+- [x] **Step 1: Add failing fixture-based OAuth tests** — valid registration and refresh; wrong state/nonce; expired and wrong-audience ID tokens; missing granted scope; account mismatch; and a rejected callback leaving the previous Keychain item unchanged.
+- [x] **Step 2: Add failing provider stream tests** — text/image payload selection, ordered SSE deltas, failed/completed event handling, missing model access, and request cancellation. Use fake token responses; never use a real ChatGPT token in automated tests.
+- [x] **Step 3: Run the auth/provider tests and confirm each security or stream assertion fails.**
+- [x] **Step 4: Implement OAuth validation with Apple Security/CryptoKit primitives, Keychain storage, token refresh, and the streaming Responses provider.**
+- [x] **Step 5: Rerun auth/provider tests and confirm all pass without token material in output.**
 - [ ] **Step 6: Manually validate one browser sign-in and one streamed answer only after the user starts the app's own sign-in flow and the SIWC route is confirmed eligible.**
-- [ ] **Step 7: Commit** `feat: add direct ChatGPT plan provider`.
+- [x] **Step 7: Commit** `feat: add direct ChatGPT plan provider` (`b20aa05`; security review fixes in `10145f9`).
 
 ### Task 6: Connect chat state to the native interface
 
