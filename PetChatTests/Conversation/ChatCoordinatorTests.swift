@@ -291,6 +291,18 @@ final class ChatCoordinatorTests: XCTestCase {
         XCTAssertEqual(model.excludedMessageIDs, [oldUser.id, oldPet.id])
     }
 
+    func testTextSizeRestoresFromInjectedDefaultsAndRejectsUnknownSavedSize() throws {
+        let fixture = try Fixture()
+        let model = AppModel(coordinator: fixture.coordinator, auth: fixture.auth, defaults: fixture.defaults)
+        XCTAssertEqual(model.textSize, 13)
+        model.textSize = 17
+        let restored = AppModel(coordinator: fixture.coordinator, auth: fixture.auth, defaults: fixture.defaults)
+        XCTAssertEqual(restored.textSize, 17)
+        fixture.defaults.set(100_000, forKey: "PetChat.textSize")
+        let invalid = AppModel(coordinator: fixture.coordinator, auth: fixture.auth, defaults: fixture.defaults)
+        XCTAssertEqual(invalid.textSize, 13)
+    }
+
     func testRestartRestoresChatProviderIdentityWithoutDiscovery() throws {
         let fixture = try Fixture()
         let original = AppModel(coordinator: fixture.coordinator, auth: fixture.auth, defaults: fixture.defaults)
@@ -301,6 +313,7 @@ final class ChatCoordinatorTests: XCTestCase {
         XCTAssertEqual(restored.thread?.providerID, .chatGPT)
         XCTAssertEqual(restored.selectedModelID, "gpt")
         XCTAssertTrue(fixture.otherProvider.requests.isEmpty)
+        XCTAssertEqual(fixture.otherProvider.modelDiscoveryCount, 0)
     }
 
     func testShutdownStopsStreamingAndPreservesDraftHistoryAndProvider() async throws {
@@ -322,6 +335,30 @@ final class ChatCoordinatorTests: XCTestCase {
         XCTAssertEqual(model.thread?.providerID, .chatGPT)
         XCTAssertEqual(model.thread?.messages.last?.status, .stopped)
         XCTAssertEqual(try fixture.store.load().last?.messages.last?.status, .stopped)
+    }
+
+    func testShutdownStopsAllActiveProviderStreams() async throws {
+        let fixture = try Fixture()
+        for provider in [fixture.provider, fixture.otherProvider] {
+            provider.holdOpen = true
+            provider.events = [.textDelta("Partial")]
+        }
+        let started = expectation(description: "both streams started")
+        started.expectedFulfillmentCount = 2
+        fixture.provider.onStream = { started.fulfill() }
+        fixture.otherProvider.onStream = { started.fulfill() }
+        let first = try fixture.coordinator.newThread(providerID: .ollama, modelID: "text")
+        let second = try fixture.coordinator.newThread(providerID: .chatGPT, modelID: "gpt")
+        let model = AppModel(coordinator: fixture.coordinator, auth: fixture.auth, defaults: fixture.defaults)
+        let firstSend = Task { try await fixture.coordinator.send(text: "First", attachmentIDs: [], threadID: first.id) }
+        let secondSend = Task { try await fixture.coordinator.send(text: "Second", attachmentIDs: [], threadID: second.id) }
+        await fulfillment(of: [started], timeout: 2)
+        await model.shutdown()
+        try await firstSend.value
+        try await secondSend.value
+        XCTAssertTrue(fixture.provider.cancelled)
+        XCTAssertTrue(fixture.otherProvider.cancelled)
+        XCTAssertEqual(try fixture.store.load().map { $0.messages.last?.status }, [.stopped, .stopped])
     }
 
     func testShutdownDiscardsLateCaptureAndModelDiscovery() async throws {
@@ -346,9 +383,29 @@ final class ChatCoordinatorTests: XCTestCase {
         await discovery.value
         XCTAssertTrue(model.attachmentIDs.isEmpty)
         XCTAssertTrue(model.models.isEmpty)
+        XCTAssertTrue(fixture.provider.modelDiscoveryWasCancelled)
         XCTAssertEqual(model.draft, "Keep draft")
         await model.submit()
         XCTAssertTrue(fixture.provider.requests.isEmpty)
+    }
+
+    func testShutdownCancelsPendingSubmissionDiscoveryWithoutGenerating() async throws {
+        let fixture = try Fixture()
+        fixture.provider.holdModels = true
+        let started = expectation(description: "send discovery started")
+        fixture.provider.onModels = { started.fulfill() }
+        let model = AppModel(coordinator: fixture.coordinator, auth: fixture.auth, defaults: fixture.defaults)
+        try model.select(providerID: .ollama, modelID: "text")
+        model.draft = "Keep unsent question"
+        let pending = Task { await model.submit() }
+        await fulfillment(of: [started], timeout: 2)
+        await model.shutdown()
+        fixture.provider.modelsGate?.resume()
+        await pending.value
+        XCTAssertTrue(fixture.provider.modelDiscoveryWasCancelled)
+        XCTAssertTrue(fixture.provider.requests.isEmpty)
+        XCTAssertTrue(model.thread?.messages.isEmpty == true)
+        XCTAssertEqual(model.draft, "Keep unsent question")
     }
 
     func testSignOutInvalidatesPendingConnectWithoutDiscoveryOrDraftLoss() async throws {
@@ -368,6 +425,7 @@ final class ChatCoordinatorTests: XCTestCase {
         XCTAssertEqual(model.draft, "Keep draft")
         XCTAssertEqual(model.thread?.providerID, .chatGPT)
         XCTAssertTrue(fixture.otherProvider.requests.isEmpty)
+        XCTAssertEqual(fixture.otherProvider.modelDiscoveryCount, 0)
     }
 
     func testLastSelectedPairSurvivesDeletingFinalChat() throws {
@@ -679,18 +737,22 @@ private final class ScriptedProvider: ChatProvider, @unchecked Sendable {
     var holdModels = false
     var onModels: (() -> Void)?
     var modelsGate: CheckedContinuation<Void, Never>?
+    var modelDiscoveryWasCancelled = false
+    var modelDiscoveryCount = 0
     var cancelled = false
     var supportsImages = true
     var contextWindowTokens = 4096
 
     init(id: ProviderID) { providerID = id }
     func availableModels() async throws -> [ProviderModel] {
+        modelDiscoveryCount += 1
         if holdModels {
             await withCheckedContinuation { continuation in
                 modelsGate = continuation
                 onModels?()
             }
         }
+        modelDiscoveryWasCancelled = Task.isCancelled
         return [ProviderModel(id: providerID == .ollama ? "text" : "gpt", displayName: "Test", supportsImages: supportsImages, contextWindowTokens: contextWindowTokens)]
     }
     func stream(_ request: GenerationRequest) -> AsyncThrowingStream<GenerationEvent, Error> {

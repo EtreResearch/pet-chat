@@ -4,7 +4,6 @@ import SwiftUI
 struct ComposerView: View {
     @Bindable var model: AppModel
     @FocusState private var isFocused: Bool
-    @ScaledMetric(relativeTo: .body) private var editorHeight = 58
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -28,7 +27,7 @@ struct ComposerView: View {
             TextEditor(text: $model.draft)
                 .focused($isFocused)
                 .onAppear { if NSApp.isActive { isFocused = true } }
-                .frame(height: editorHeight)
+                .frame(height: model.textSize == 17 ? 76 : 58)
                 .accessibilityLabel("Message")
             HStack {
                 Button("Capture area") { Task { await model.captureImage() } }

@@ -4,7 +4,6 @@ struct ChatPanelView: View {
     @Bindable var model: AppModel
     let onClose: () -> Void
     let onChangeModel: () -> Void
-    @ScaledMetric(relativeTo: .body) private var textSize = 13
 
     var body: some View {
         VStack(spacing: 0) {
@@ -73,7 +72,7 @@ struct ChatPanelView: View {
             Divider()
             ComposerView(model: model)
         }
-        .font(.system(size: textSize))
+        .font(.system(size: model.textSize))
         .frame(width: 340, height: 420)
         .task(id: model.thread?.id) { await model.loadModels(for: model.selectedProviderID) }
     }

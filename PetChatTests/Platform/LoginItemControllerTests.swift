@@ -5,7 +5,9 @@ import XCTest
 @MainActor
 final class LoginItemControllerTests: XCTestCase {
     func testLaunchDefaultsOffAndNeverRegistersFromSavedOptIn() throws {
-        let defaults = UserDefaults(suiteName: UUID().uuidString)!
+        let suiteName = UUID().uuidString
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
         var registrations = 0
         let controller = LoginItemController(defaults: defaults, status: { .notRegistered },
                                              register: { registrations += 1 }, unregister: {})
@@ -20,7 +22,9 @@ final class LoginItemControllerTests: XCTestCase {
     }
 
     func testOnlyExplicitToggleRegistersAndPersistsOptIn() throws {
-        let defaults = UserDefaults(suiteName: UUID().uuidString)!
+        let suiteName = UUID().uuidString
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
         var status = SMAppService.Status.notRegistered
         let controller = LoginItemController(defaults: defaults, status: { status },
                                              register: { status = .enabled }, unregister: { status = .notRegistered })
@@ -32,8 +36,24 @@ final class LoginItemControllerTests: XCTestCase {
         XCTAssertFalse(defaults.bool(forKey: "PetChat.launchAtLogin"))
     }
 
+    func testDisablingRemovedLoginItemClearsSavedOptIn() throws {
+        let suiteName = UUID().uuidString
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        defaults.set(true, forKey: "PetChat.launchAtLogin")
+        let controller = LoginItemController(defaults: defaults, status: { .notRegistered },
+            register: { throw CocoaError(.fileWriteNoPermission) },
+            unregister: { throw CocoaError(.fileNoSuchFile) })
+        try controller.setEnabled(false)
+        XCTAssertFalse(controller.optedIn)
+        XCTAssertFalse(controller.isEnabled)
+        XCTAssertFalse(defaults.bool(forKey: "PetChat.launchAtLogin"))
+    }
+
     func testRequiresApprovalIsNotEnabledAndFailureKeepsPriorChoice() throws {
-        let defaults = UserDefaults(suiteName: UUID().uuidString)!
+        let suiteName = UUID().uuidString
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
         var status = SMAppService.Status.notRegistered
         let controller = LoginItemController(defaults: defaults, status: { status },
                                              register: { status = .requiresApproval },

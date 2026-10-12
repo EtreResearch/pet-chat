@@ -5,6 +5,19 @@ import XCTest
 
 @MainActor
 final class RegionCaptureTests: XCTestCase {
+    func testCancellingOneSelectionDoesNotCloseAnotherSelection() async throws {
+        let first = Task { await RegionSelectionOverlay.selectRegion() }
+        try await Task.sleep(for: .milliseconds(100))
+        let second = Task { await RegionSelectionOverlay.selectRegion() }
+        try await Task.sleep(for: .milliseconds(100))
+        first.cancel()
+        try await Task.sleep(for: .milliseconds(150))
+        XCTAssertTrue(NSApp.windows.contains { $0.isVisible && $0.contentView is RegionSelectionOverlay })
+        second.cancel()
+        _ = await first.value
+        _ = await second.value
+    }
+
     func testCancellingSelectionClosesOverlaysWithoutCapturing() async throws {
         let pending = Task { await RegionSelectionOverlay.selectRegion() }
         try await Task.sleep(for: .milliseconds(100))

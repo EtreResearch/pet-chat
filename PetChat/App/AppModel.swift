@@ -14,6 +14,7 @@ final class AppModel {
     private(set) var currentThreadID: UUID?
     private(set) var selectedProviderID: ProviderID = .ollama
     private(set) var selectedModelID = ""
+    var textSize: Double { didSet { defaults.set(textSize, forKey: "PetChat.textSize") } }
     var draft = ""
     var attachmentIDs: [UUID] = []
     var captureRegion: (@MainActor () async throws -> Data?)?
@@ -24,6 +25,9 @@ final class AppModel {
     private(set) var errorMessage: String?
     private(set) var models: [ProviderModel] = []
     private var modelLoadID: UUID?
+    private var modelLoadProviderID: ProviderID?
+    private var modelLoadTask: Task<[ProviderModel], Error>?
+    private var submissionTask: Task<Void, Error>?
 
     var thread: ChatThread? { coordinator.threads.first { $0.id == currentThreadID } }
     var excludedMessageIDs: Set<UUID> {
@@ -39,6 +43,7 @@ final class AppModel {
         self.coordinator = coordinator
         self.auth = auth
         self.defaults = defaults
+        textSize = defaults.double(forKey: "PetChat.textSize") == 17 ? 17 : 13
         loginItemController = LoginItemController(defaults: defaults)
         self.signIn = signIn ?? { _ = try await auth.signIn() }
         if let last = coordinator.threads.last {
@@ -54,10 +59,17 @@ final class AppModel {
     func loadModels(for providerID: ProviderID) async {
         guard !isShuttingDown else { return }
         let loadID = UUID()
+        modelLoadTask?.cancel()
         modelLoadID = loadID
+        modelLoadProviderID = providerID
+        let task = Task { try await coordinator.models(for: providerID) }
+        modelLoadTask = task
+        defer {
+            if modelLoadID == loadID { modelLoadTask = nil; modelLoadProviderID = nil }
+        }
         models = []
         do {
-            let available = try await coordinator.models(for: providerID)
+            let available = try await withTaskCancellationHandler { try await task.value } onCancel: { task.cancel() }
             guard modelLoadID == loadID else { return }
             models = available
             errorMessage = nil
@@ -69,7 +81,9 @@ final class AppModel {
     func connectChatGPT() async {
         guard !isShuttingDown else { return }
         let connectID = UUID()
+        modelLoadTask?.cancel()
         modelLoadID = connectID
+        modelLoadProviderID = .chatGPT
         models = []
         do {
             try await signIn()
@@ -158,14 +172,17 @@ final class AppModel {
         activeSubmissionID = submissionID
         isLoading = true
         errorMessage = nil
+        let task = Task { try await coordinator.send(text: text, attachmentIDs: images, threadID: id) }
+        submissionTask = task
         defer {
             if activeSubmissionID == submissionID {
                 activeSubmissionID = nil
+                submissionTask = nil
                 isLoading = false
             }
         }
         do {
-            try await coordinator.send(text: text, attachmentIDs: images, threadID: id)
+            try await withTaskCancellationHandler { try await task.value } onCancel: { task.cancel() }
             if activeSubmissionID == submissionID, currentThreadID == id,
                thread?.messages.last?.status == .complete {
                 if draft == text { draft = "" }
@@ -195,16 +212,26 @@ final class AppModel {
             }
         }
         if activeSubmissionID == submissionID {
+            submissionTask?.cancel()
+            submissionTask = nil
             activeSubmissionID = nil
             isLoading = false
         }
     }
 
     func signOutChatGPT() async {
-        modelLoadID = nil
+        if modelLoadProviderID == .chatGPT {
+            modelLoadID = nil
+            modelLoadTask?.cancel()
+            modelLoadTask = nil
+            modelLoadProviderID = nil
+        }
+        if selectedProviderID == .chatGPT { activeSubmissionID = nil }
         do { try await auth.signOut() } catch { report(error) }
         do { try await coordinator.stopAll(providerID: .chatGPT) } catch { report(error) }
         if selectedProviderID == .chatGPT {
+            submissionTask?.cancel()
+            submissionTask = nil
             models = []
             activeSubmissionID = nil
             isLoading = false
@@ -214,12 +241,17 @@ final class AppModel {
     func shutdown() async {
         isShuttingDown = true
         modelLoadID = nil
+        modelLoadTask?.cancel()
+        modelLoadTask = nil
+        modelLoadProviderID = nil
         draftContextID = UUID()
         captureTask?.cancel()
         activeSubmissionID = nil
         isLoading = false
         await auth.shutdown()
         do { try await coordinator.stopAll() } catch { report(error) }
+        submissionTask?.cancel()
+        submissionTask = nil
     }
 
     func report(_ error: Error) { errorMessage = error.localizedDescription }

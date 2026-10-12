@@ -40,10 +40,9 @@ final class ChatAccessibilityTests: XCTestCase {
         }
     }
 
-    func testSetupExposesLoginConsentAndPrivacyExplanationAtLargeTextSize() async throws {
+    func testSetupExposesLoginConsentAndPrivacyExplanation() async throws {
         let model = try makeSettingsModel()
-        let host = NSHostingView(rootView: SetupView(model: model, onSelected: {})
-            .dynamicTypeSize(.accessibility1))
+        let host = NSHostingView(rootView: SetupView(model: model, onSelected: {}))
         host.frame = CGRect(x: 0, y: 0, width: 340, height: 420)
         let window = show(host)
         defer { window.contentView = nil; window.close() }
@@ -68,11 +67,36 @@ final class ChatAccessibilityTests: XCTestCase {
         defer { window.contentView = nil; window.close() }
         try await Task.sleep(for: .milliseconds(150))
         let labels = accessibilityLabels(in: AXUIElementCreateApplication(getpid()))
-        for label in ["Launch at login", "Sign out of ChatGPT", "Open chat shortcut", "Pet display"] {
+        for label in ["Launch at login", "Sign out of ChatGPT", "Open chat shortcut", "Pet display", "Text size"] {
             XCTAssertTrue(labels.contains(label), "Missing accessible \(label): \(labels)")
         }
         XCTAssertTrue(labels.contains { $0.contains("Screen Recording") && $0.contains("System Settings") })
         XCTAssertTrue(labels.contains { $0.contains("Ollama") && $0.contains("test") })
+    }
+
+    func testLargerTextScalesComposerFontAndEditorWithinPanel() async throws {
+        let model = try makeSettingsModel()
+        try model.select(providerID: .ollama, modelID: "test")
+        func measure(_ size: Double) async throws -> (font: CGFloat, height: CGFloat) {
+            model.textSize = size
+            let host = NSHostingView(rootView: ChatPanelView(model: model, onClose: {}, onChangeModel: {}))
+            host.frame = CGRect(x: 0, y: 0, width: 340, height: 420)
+            let window = show(host)
+            defer { window.contentView = nil; window.close() }
+            try await Task.sleep(for: .milliseconds(100))
+            func editor(in view: NSView) -> NSTextView? {
+                if let text = view as? NSTextView { return text }
+                return view.subviews.lazy.compactMap { editor(in: $0) }.first
+            }
+            let text = try XCTUnwrap(editor(in: host))
+            let viewport = try XCTUnwrap(text.enclosingScrollView)
+            XCTAssertTrue(host.bounds.contains(viewport.convert(viewport.bounds, to: host)))
+            return (try XCTUnwrap(text.font).pointSize, viewport.frame.height)
+        }
+        let standard = try await measure(13)
+        let larger = try await measure(17)
+        XCTAssertGreaterThan(larger.font, standard.font)
+        XCTAssertGreaterThan(larger.height, standard.height)
     }
 
     func testThinkingPetKeepsAccessibleNameAndCompactSize() async throws {

@@ -3,6 +3,7 @@ import AppKit
 @MainActor
 final class RegionSelectionOverlay: NSView {
     var onSelection: ((CGRect?) -> Void)?
+    private var selectionID = UUID()
     private var start: CGPoint?
     private var selection: CGRect?
     override var acceptsFirstResponder: Bool { true }
@@ -46,7 +47,8 @@ final class RegionSelectionOverlay: NSView {
     }
 
     static func selectRegion() async -> RegionSelection? {
-        await withTaskCancellationHandler {
+        let selectionID = UUID()
+        return await withTaskCancellationHandler {
             guard !Task.isCancelled else { return nil }
             return await withCheckedContinuation { continuation in
                 var panels: [SelectionPanel] = []
@@ -60,6 +62,7 @@ final class RegionSelectionOverlay: NSView {
                     panel.backgroundColor = .clear
                     panel.isOpaque = false
                     let overlay = RegionSelectionOverlay(frame: CGRect(origin: .zero, size: screen.frame.size))
+                    overlay.selectionID = selectionID
                     overlay.setAccessibilityLabel("Select capture area. Drag within a display. Escape cancels.")
                     overlay.onSelection = { rect in
                         guard !finished else { return }
@@ -83,7 +86,9 @@ final class RegionSelectionOverlay: NSView {
         } onCancel: {
             Task { @MainActor in
                 for window in NSApp.windows {
-                    (window.contentView as? RegionSelectionOverlay)?.cancelOperation(nil)
+                    if let overlay = window.contentView as? RegionSelectionOverlay, overlay.selectionID == selectionID {
+                        overlay.cancelOperation(nil)
+                    }
                 }
             }
         }

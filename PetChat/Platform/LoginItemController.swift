@@ -25,7 +25,8 @@ final class LoginItemController {
     }
 
     func setEnabled(_ enabled: Bool) throws {
-        if enabled { try register() } else { try unregister() }
+        if enabled { try register() }
+        else if status() == .enabled || status() == .requiresApproval { try unregister() }
         optedIn = enabled
         defaults.set(enabled, forKey: "PetChat.launchAtLogin")
         refreshStatus()
