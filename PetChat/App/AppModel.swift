@@ -157,10 +157,9 @@ final class AppModel {
         do {
             try await coordinator.send(text: text, attachmentIDs: images, threadID: id)
             if activeSubmissionID == submissionID, currentThreadID == id,
-               thread?.messages.last?.status == .complete,
-               draft == text, attachmentIDs == images {
-                draft = ""
-                attachmentIDs = []
+               thread?.messages.last?.status == .complete {
+                if draft == text { draft = "" }
+                attachmentIDs.removeAll { images.contains($0) }
             }
         } catch {
             if activeSubmissionID == submissionID { errorMessage = error.localizedDescription }

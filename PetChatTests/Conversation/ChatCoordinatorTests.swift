@@ -208,6 +208,37 @@ final class ChatCoordinatorTests: XCTestCase {
         XCTAssertEqual(model.draft, "Next question")
     }
 
+    func testSuccessfulImageSendClearsSubmittedPreviewWhileKeepingEditedText() async throws {
+        let fixture = try Fixture()
+        let started = expectation(description: "image stream started")
+        fixture.provider.holdOpen = true
+        fixture.provider.onStream = { started.fulfill() }
+        let model = AppModel(coordinator: fixture.coordinator, defaults: fixture.defaults)
+        try model.select(providerID: .ollama, modelID: "text")
+        let threadID = try XCTUnwrap(model.currentThreadID)
+        model.draft = "Original image question"
+        try model.attachImage(testPNG())
+        let image = try XCTUnwrap(model.attachmentIDs.first)
+        let send = Task { await model.submit() }
+        await fulfillment(of: [started], timeout: 2)
+        model.draft = "Next text question"
+        fixture.provider.continuation?.yield(.completed)
+        fixture.provider.continuation?.finish()
+        await send.value
+
+        XCTAssertEqual(model.draft, "Next text question")
+        XCTAssertTrue(model.attachmentIDs.isEmpty)
+        XCTAssertEqual(model.thread?.messages.first?.attachmentIDs, [image])
+        XCTAssertEqual(try fixture.attachments.load(image, threadID: threadID), testPNG())
+        fixture.provider.holdOpen = false
+        fixture.provider.onStream = nil
+        await model.submit()
+        XCTAssertEqual(fixture.provider.requests.count, 2)
+        XCTAssertEqual(fixture.provider.requests.last?.imageData, [:])
+        XCTAssertEqual(fixture.provider.requests.last?.messages.last?.attachmentIDs, [])
+        XCTAssertEqual(try fixture.attachments.load(image, threadID: threadID), testPNG())
+    }
+
     func testOlderModelDiscoveryCannotReplaceNewProviderModels() async throws {
         let fixture = try Fixture()
         let started = expectation(description: "old discovery started")
