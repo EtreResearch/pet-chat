@@ -16,7 +16,7 @@
 - Local-only conversation persistence in SwiftData plus app-owned Application Support image files; credentials in Keychain.
 - The app uses only the user's submitted prompt and explicitly attached text/images. Never read the screen in the background or make idle AI requests.
 - A chat stays with its provider and model. Changing either starts a new chat. Never silently fail over or move context to another provider/model.
-- Sign in with ChatGPT must use the documented flow under this app's identity and must meet its local/open-source eligibility requirements. Do not reuse Codex credentials or replace the flow with API keys/CLI without a new design review.
+- Sign in with ChatGPT must use the documented flow under this app's identity and must meet its personal/local eligibility requirements. Do not reuse Codex credentials or replace the flow with API keys/CLI without a new design review.
 - Use `stream: true` and `store: false` on the ChatGPT Responses path; supply each turn's needed input instead of HTTP previous-response continuation.
 - Keep the approved brief, neutral reply style, panel sizes, default shortcut, no-sound behavior, scope, and displayed copy from the spec.
 - Use Apple platform frameworks first. Add no package dependency unless a measured project requirement proves it necessary.
@@ -118,7 +118,7 @@
 
 ### Task 5: Implement direct ChatGPT sign-in and streaming provider
 
-**Precondition:** Before implementing account access, recheck current Sign in with ChatGPT rules. If the required local/open-source eligibility does not fit this project, stop this task and return the constraint for review. Do not substitute Codex CLI reuse, a copied Codex credential, or an API key.
+**Precondition:** Before implementing account access, recheck current Sign in with ChatGPT rules. If current rules exclude personal projects that run locally, stop this task and return the constraint for review. Do not substitute Codex CLI reuse, a copied Codex credential, or an API key.
 
 **Files:**
 - Create `PetChat/Auth/ChatGPTOAuthClient.swift`.
