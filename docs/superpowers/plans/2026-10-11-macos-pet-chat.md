@@ -93,11 +93,11 @@
 - `AttachmentStore.save(_ bytes: Data, threadID: UUID) throws -> UUID`, `load(_ id: UUID, threadID: UUID) throws -> Data`, and `deleteAll(threadID: UUID) throws`.
 - Use SwiftData for chat/message records. Store images as files in a per-chat directory under Application Support; persist only attachment IDs and safe relative paths. Write image files atomically. Delete attachment files when deleting a chat.
 
-- [ ] **Step 1: Add failing tests** — `testRestoresThreadAfterStoreRecreation`, `testDeletesOnlySelectedThreadAndAttachments`, `testFailedSaveDoesNotReportSuccess`, and `testMissingAttachmentReturnsRecoverableError`.
-- [ ] **Step 2: Run each new test with `xcodebuild test -project PetChat.xcodeproj -scheme PetChat -destination 'platform=macOS'` and confirm failure before implementation.**
-- [ ] **Step 3: Implement the two store interfaces** with an injectable in-memory SwiftData container and temporary attachment root for tests. Save after each user turn, each streamed pet update, and terminal turn status.
-- [ ] **Step 4: Rerun the store tests and confirm persistence, isolation, and deletion assertions pass.**
-- [ ] **Step 5: Commit** `feat: persist local chats and attachments`.
+- [x] **Step 1: Add failing tests** — `testRestoresThreadAfterStoreRecreation`, `testDeletesOnlySelectedThreadAndAttachments`, `testFailedSaveDoesNotReportSuccess`, and `testMissingAttachmentReturnsRecoverableError`.
+- [x] **Step 2: Run each new test with `xcodebuild test -project PetChat.xcodeproj -scheme PetChat -destination 'platform=macOS'` and confirm failure before implementation.**
+- [x] **Step 3: Implement the two store interfaces** with an injectable in-memory SwiftData container and temporary attachment root for tests. Save after each user turn, each streamed pet update, and terminal turn status.
+- [x] **Step 4: Rerun the store tests and confirm persistence, isolation, and deletion assertions pass.**
+- [x] **Step 5: Commit** `feat: persist local chats and attachments`.
 
 ### Task 4: Implement Ollama discovery, text/images, and streaming
 
