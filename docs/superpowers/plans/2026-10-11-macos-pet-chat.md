@@ -45,11 +45,11 @@
 - Produces the SwiftUI app entry point and a single accessory-app lifecycle.
 - `PetChatApp` owns the shared app delegate and root pet view. The root initially draws a static, accessible cat placeholder at the approved 64-point size.
 
-- [ ] **Step 1: Add the UI launch smoke test** — `testAppLaunchesWithPetVisible` uses `XCUIApplication` to launch the app and asserts the “Pet” accessibility element is present.
-- [ ] **Step 2: Run `xcodebuild test -project PetChat.xcodeproj -scheme PetChat -destination 'platform=macOS'` and confirm the new test fails because the target/app does not exist.**
-- [ ] **Step 3: Create the Xcode project and app shell** with Swift 6, `LSUIElement = YES`, an accessible static cat, and the minimum deployment target proposal above. Reconcile the two project notes in the Files list to match the spec. Do not add an external package.
-- [ ] **Step 4: Rerun the same `xcodebuild test` command and confirm the launch test passes.**
-- [ ] **Step 5: Commit** `feat: add native macOS pet app shell`.
+- [x] **Step 1: Add the UI launch smoke test** — `testAppLaunchesWithPetVisible` uses `XCUIApplication` to launch the app and asserts the “Pet” accessibility element is present.
+- [x] **Step 2: Run `xcodebuild test -project PetChat.xcodeproj -scheme PetChat -destination 'platform=macOS'` and confirm the new test fails because the target/app does not exist.**
+- [x] **Step 3: Create the Xcode project and app shell** with Swift 6, `LSUIElement = YES`, an accessible static cat, and the minimum deployment target proposal above. Reconcile the two project notes in the Files list to match the spec. Do not add an external package.
+- [x] **Step 4: Rerun the same `xcodebuild test` command and confirm the launch test passes.**
+- [x] **Step 5: Commit** `feat: add native macOS pet app shell`.
 
 ### Task 2: Define chats, provider boundaries, and request context
 
@@ -73,11 +73,11 @@
 - `GenerationEvent`: `.textDelta(String)` and `.completed`.
 - `ContextBuilder.build(thread:currentText:currentAttachmentIDs:contextWindowTokens:) -> [PromptMessage]` returns oldest-to-newest whole message pairs under a conservative input-token estimate, reserves room for the answer, retains the newest exchange, and excludes all other chats.
 
-- [ ] **Step 1: Add failing domain/context tests** — cover a new chat having no inherited messages, provider/model being immutable for a chat, whole recent-pair retention, history exclusion, image IDs restricted to the current user message, and an oversized current message remaining intact.
-- [ ] **Step 2: Run `xcodebuild test -project PetChat.xcodeproj -scheme PetChat -destination 'platform=macOS'` and confirm the new tests fail.**
-- [ ] **Step 3: Implement the types and pure `ContextBuilder`**. Estimate tokens conservatively from text length; clamp to a known model window when present, otherwise use a conservative 8,000-token input budget. Never split or silently rewrite a user's message. Add a `shortcut:` comment to the estimator identifying its approximation and when provider-native tokenization should replace it.
-- [ ] **Step 4: Rerun the same test command and confirm the domain/context tests pass.**
-- [ ] **Step 5: Commit** `feat: add provider-bound chat domain`.
+- [x] **Step 1: Add failing domain/context tests** — cover a new chat having no inherited messages, provider/model being immutable for a chat, whole recent-pair retention, history exclusion, image IDs restricted to the current user message, and an oversized current message remaining intact.
+- [x] **Step 2: Run `xcodebuild test -project PetChat.xcodeproj -scheme PetChat -destination 'platform=macOS'` and confirm the new tests fail.**
+- [x] **Step 3: Implement the types and pure `ContextBuilder`**. Estimate tokens conservatively from text length; clamp to a known model window when present, otherwise use a conservative 8,000-token input budget. Never split or silently rewrite a user's message. Add a `shortcut:` comment to the estimator identifying its approximation and when provider-native tokenization should replace it.
+- [x] **Step 4: Rerun the same test command and confirm the domain/context tests pass.**
+- [x] **Step 5: Commit** `feat: add provider-bound chat domain`.
 
 ### Task 3: Persist chats and screenshot attachments locally
 
