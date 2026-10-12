@@ -9,10 +9,14 @@ final class LocalChatStore {
     private let saveContext: (ModelContext) throws -> Void
 
     init(container: ModelContainer, attachments: AttachmentStore = AttachmentStore(),
-         saveContext: @escaping (ModelContext) throws -> Void = { try $0.save() }) {
+         saveContext: @escaping (ModelContext) throws -> Void = { try $0.save() }) throws {
         self.container = container
         self.attachments = attachments
         self.saveContext = saveContext
+        let context = ModelContext(container)
+        try attachments.recoverPending { id in
+            try !context.fetch(FetchDescriptor<ChatRecord>(predicate: #Predicate { $0.id == id })).isEmpty
+        }
     }
 
     convenience init() throws {
@@ -41,14 +45,16 @@ final class LocalChatStore {
 
     func delete(threadID: UUID) throws {
         let context = ModelContext(container)
+        let staged = try attachments.stageDeletion(threadID: threadID)
         do {
             let existing = try context.fetch(FetchDescriptor<ChatRecord>(predicate: #Predicate { $0.id == threadID }))
             existing.forEach(context.delete)
             try saveContext(context)
-            try attachments.deleteAll(threadID: threadID)
         } catch {
             context.rollback()
+            if staged { try attachments.restoreDeletion(threadID: threadID) }
             throw error
         }
+        if staged { try attachments.finishDeletion(threadID: threadID) }
     }
 }

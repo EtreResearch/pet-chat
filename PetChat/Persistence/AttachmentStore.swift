@@ -4,10 +4,12 @@ struct AttachmentStore {
     enum Error: Swift.Error, Equatable { case missing }
 
     let root: URL
+    private let removeItem: (URL) throws -> Void
 
-    init(root: URL? = nil) {
+    init(root: URL? = nil, removeItem: @escaping (URL) throws -> Void = { try FileManager.default.removeItem(at: $0) }) {
         self.root = root ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("PetChat/Attachments", isDirectory: true)
+        self.removeItem = removeItem
     }
 
     func save(_ bytes: Data, threadID: UUID) throws -> UUID {
@@ -28,7 +30,42 @@ struct AttachmentStore {
     func deleteAll(threadID: UUID) throws {
         let directory = root.appendingPathComponent(threadID.uuidString, isDirectory: true)
         if FileManager.default.fileExists(atPath: directory.path) {
-            try FileManager.default.removeItem(at: directory)
+            try removeItem(directory)
+        }
+    }
+
+    private var pendingRoot: URL { root.appendingPathComponent(".pending-deletion", isDirectory: true) }
+
+    func stageDeletion(threadID: UUID) throws -> Bool {
+        let directory = root.appendingPathComponent(threadID.uuidString, isDirectory: true)
+        guard FileManager.default.fileExists(atPath: directory.path) else { return false }
+        try FileManager.default.createDirectory(at: pendingRoot, withIntermediateDirectories: true)
+        try FileManager.default.moveItem(at: directory, to: pendingRoot.appendingPathComponent(threadID.uuidString))
+        return true
+    }
+
+    func restoreDeletion(threadID: UUID) throws {
+        let staged = pendingRoot.appendingPathComponent(threadID.uuidString)
+        guard FileManager.default.fileExists(atPath: staged.path) else { return }
+        try FileManager.default.moveItem(at: staged, to: root.appendingPathComponent(threadID.uuidString))
+    }
+
+    func finishDeletion(threadID: UUID) throws {
+        let staged = pendingRoot.appendingPathComponent(threadID.uuidString)
+        if FileManager.default.fileExists(atPath: staged.path) {
+            try removeItem(staged)
+        }
+    }
+
+    func recoverPending(threadExists: (UUID) throws -> Bool) throws {
+        guard FileManager.default.fileExists(atPath: pendingRoot.path) else { return }
+        for directory in try FileManager.default.contentsOfDirectory(at: pendingRoot, includingPropertiesForKeys: nil) {
+            guard let id = UUID(uuidString: directory.lastPathComponent) else { continue }
+            if try threadExists(id) {
+                try restoreDeletion(threadID: id)
+            } else {
+                try finishDeletion(threadID: id)
+            }
         }
     }
 }

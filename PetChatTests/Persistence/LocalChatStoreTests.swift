@@ -27,7 +27,7 @@ final class LocalChatStoreTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: root) }
         let attachments = AttachmentStore(root: root)
         let container = try ModelContainer(for: ChatRecord.self, MessageRecord.self, configurations: ModelConfiguration(isStoredInMemoryOnly: true))
-        let store = LocalChatStore(container: container, attachments: attachments)
+        let store = try LocalChatStore(container: container, attachments: attachments)
         let first = ChatThread(providerID: .ollama, modelID: "a")
         let second = ChatThread(providerID: .chatGPT, modelID: "b")
         let firstImage = try attachments.save(Data([1]), threadID: first.id)
@@ -45,11 +45,48 @@ final class LocalChatStoreTests: XCTestCase {
     func testFailedSaveDoesNotReportSuccess() throws {
         enum Failure: Error { case unavailable }
         let container = try ModelContainer(for: ChatRecord.self, MessageRecord.self, configurations: ModelConfiguration(isStoredInMemoryOnly: true))
-        let store = LocalChatStore(container: container, saveContext: { _ in throw Failure.unavailable })
+        let store = try LocalChatStore(container: container, saveContext: { _ in throw Failure.unavailable })
 
         XCTAssertThrowsError(try store.save(ChatThread(providerID: .ollama, modelID: "a"))) { error in
             XCTAssertTrue(error is Failure)
         }
         XCTAssertTrue(try LocalChatStore(container: container).load().isEmpty)
+    }
+
+    func testFailedAttachmentCleanupIsReportedAndRetriedOnNextStore() throws {
+        enum Failure: Swift.Error { case diskUnavailable }
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let container = try ModelContainer(for: ChatRecord.self, MessageRecord.self, configurations: ModelConfiguration(isStoredInMemoryOnly: true))
+        let attachments = AttachmentStore(root: root, removeItem: { _ in throw Failure.diskUnavailable })
+        let thread = ChatThread(providerID: .ollama, modelID: "vision")
+        let image = try attachments.save(Data([7]), threadID: thread.id)
+        let store = try LocalChatStore(container: container, attachments: attachments)
+        try store.save(thread)
+
+        XCTAssertThrowsError(try store.delete(threadID: thread.id)) { XCTAssertTrue($0 is Failure) }
+        XCTAssertTrue(try store.load().isEmpty)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: root.appendingPathComponent(".pending-deletion/").appendingPathComponent(thread.id.uuidString).path))
+
+        let reopened = try LocalChatStore(container: container, attachments: AttachmentStore(root: root))
+        XCTAssertTrue(try reopened.load().isEmpty)
+        XCTAssertThrowsError(try AttachmentStore(root: root).load(image, threadID: thread.id))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: root.appendingPathComponent(".pending-deletion/").appendingPathComponent(thread.id.uuidString).path))
+    }
+
+    func testDatabaseDeleteFailureRestoresAttachments() throws {
+        enum Failure: Swift.Error { case databaseUnavailable }
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let attachments = AttachmentStore(root: root)
+        let container = try ModelContainer(for: ChatRecord.self, MessageRecord.self, configurations: ModelConfiguration(isStoredInMemoryOnly: true))
+        let thread = ChatThread(providerID: .ollama, modelID: "vision")
+        let image = try attachments.save(Data([7]), threadID: thread.id)
+        try LocalChatStore(container: container, attachments: attachments).save(thread)
+        let failing = try LocalChatStore(container: container, attachments: attachments, saveContext: { _ in throw Failure.databaseUnavailable })
+
+        XCTAssertThrowsError(try failing.delete(threadID: thread.id)) { XCTAssertTrue($0 is Failure) }
+        XCTAssertEqual(try LocalChatStore(container: container, attachments: attachments).load(), [thread])
+        XCTAssertEqual(try attachments.load(image, threadID: thread.id), Data([7]))
     }
 }
