@@ -5,7 +5,7 @@ import XCTest
 final class OllamaProviderTests: XCTestCase {
     override func tearDown() {
         MockOllamaURLProtocol.handler = nil
-        MockOllamaURLProtocol.stopped = nil
+        MockOllamaURLProtocol.expectStop(nil)
         MockOllamaURLProtocol.redirectLocation = nil
         super.tearDown()
     }
@@ -20,7 +20,7 @@ final class OllamaProviderTests: XCTestCase {
                 if model == "vision:latest" {
                     return (200, #"{"capabilities":["completion","vision"],"parameters":"temperature 0.7\nnum_ctx 2048","model_info":{"gemma.context_length":8192,"general.architecture":"gemma"}}"#.data(using: .utf8)!)
                 }
-                return (200, #"{"capabilities":["completion"],"model_info":{"llama.context_length":4096}}"#.data(using: .utf8)!)
+                return (200, #"{"capabilities":["completion"],"model_info":{"llama.context_length":8192}}"#.data(using: .utf8)!)
             default:
                 XCTFail("Unexpected request: \(request)")
                 return (404, Data())
@@ -32,6 +32,46 @@ final class OllamaProviderTests: XCTestCase {
             ProviderModel(id: "vision:latest", displayName: "vision:latest", supportsImages: true, contextWindowTokens: 2048),
             ProviderModel(id: "text:latest", displayName: "text:latest", supportsImages: false, contextWindowTokens: 4096)
         ])
+    }
+
+    func testChatContextOptionMatchesDiscoveredConfiguredAndDefaultWindows() async throws {
+        let cases: [(name: String, details: String, context: Int)] = [
+            ("configured", #"{"capabilities":["completion"],"parameters":"num_ctx 2048","model_info":{"llama.context_length":8192}}"#, 2048),
+            ("default", #"{"capabilities":["completion"],"model_info":{"llama.context_length":8192}}"#, 4096),
+            ("small", #"{"capabilities":["completion"],"model_info":{"llama.context_length":2048}}"#, 2048)
+        ]
+        for item in cases {
+            MockOllamaURLProtocol.handler = { request in
+                switch request.url?.path {
+                case "/api/tags":
+                    return (200, Data("{\"models\":[{\"name\":\"\(item.name)\"}]}".utf8))
+                case "/api/show":
+                    return (200, Data(item.details.utf8))
+                case "/api/chat":
+                    guard let body = try? JSONSerialization.jsonObject(with: request.testBody) as? [String: Any],
+                          let options = body["options"] as? [String: Int] else {
+                        XCTFail("Missing chat options")
+                        return (400, Data())
+                    }
+                    XCTAssertEqual(options["num_ctx"], item.context)
+                    return (200, Data("{\"model\":\"\(item.name)\",\"done\":true}\n".utf8))
+                default:
+                    XCTFail("Unexpected request: \(request)")
+                    return (404, Data())
+                }
+            }
+            let provider = provider()
+            let models = try await provider.availableModels()
+            XCTAssertEqual(models.first?.contextWindowTokens, item.context)
+            let request = GenerationRequest(id: UUID(), modelID: item.name, messages: [
+                PromptMessage(role: .user, text: "Hi", attachmentIDs: [])
+            ], imageData: [:])
+            var completed = false
+            for try await event in provider.stream(request) {
+                if case .completed = event { completed = true }
+            }
+            XCTAssertTrue(completed)
+        }
     }
 
     func testDoesNotFollowRedirectOutsideLocalOllama() async throws {
@@ -99,6 +139,7 @@ final class OllamaProviderTests: XCTestCase {
             }
             XCTAssertNil(messages[0]["images"])
             XCTAssertEqual(messages[1]["images"] as? [String], [Data([1, 2, 3]).base64EncodedString()])
+            XCTAssertEqual((body["options"] as? [String: Int])?["num_ctx"], 4096)
             return (200, Data((#"{"model":"vision","message":{"role":"assistant","content":""},"done":true}"# + "\n").utf8))
         }
         let request = GenerationRequest(id: UUID(), modelID: "vision", messages: [
@@ -114,6 +155,9 @@ final class OllamaProviderTests: XCTestCase {
 
     func testEmitsOrderedDeltasAndCompletion() async throws {
         MockOllamaURLProtocol.handler = { request in
+            if request.url?.path == "/api/show" {
+                return (200, Data("{}".utf8))
+            }
             XCTAssertEqual(request.url?.host, "localhost")
             XCTAssertEqual(request.url?.port, 11434)
             XCTAssertEqual(request.url?.path, "/api/chat")
@@ -123,6 +167,7 @@ final class OllamaProviderTests: XCTestCase {
             }
             XCTAssertEqual(body["model"] as? String, "text:latest")
             XCTAssertEqual(body["stream"] as? Bool, true)
+            XCTAssertEqual((body["options"] as? [String: Int])?["num_ctx"], 4096)
             guard let messages = body["messages"] as? [[String: Any]] else {
                 XCTFail("Missing chat messages")
                 return (400, Data())
@@ -154,8 +199,11 @@ final class OllamaProviderTests: XCTestCase {
     func testCancelStopsUnderlyingRequest() async throws {
         let started = expectation(description: "URLProtocol started")
         let stopped = expectation(description: "URLProtocol stopped")
-        MockOllamaURLProtocol.stopped = stopped
+        MockOllamaURLProtocol.expectStop(stopped)
         MockOllamaURLProtocol.handler = { request in
+            if request.url?.path == "/api/show" {
+                return (200, Data("{}".utf8))
+            }
             XCTAssertEqual(request.url?.path, "/api/chat")
             started.fulfill()
             return nil // Leave the request in flight until cancellation.
@@ -183,8 +231,13 @@ final class OllamaProviderTests: XCTestCase {
 
 final class MockOllamaURLProtocol: URLProtocol {
     nonisolated(unsafe) static var handler: ((URLRequest) -> (Int, Data)?)?
-    nonisolated(unsafe) static var stopped: XCTestExpectation?
+    private static let stopLock = NSLock()
+    nonisolated(unsafe) private static var stopped: XCTestExpectation?
     nonisolated(unsafe) static var redirectLocation: String?
+
+    static func expectStop(_ expectation: XCTestExpectation?) {
+        stopLock.withLock { stopped = expectation }
+    }
 
     override class func canInit(with request: URLRequest) -> Bool { true }
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
@@ -203,7 +256,14 @@ final class MockOllamaURLProtocol: URLProtocol {
         client?.urlProtocolDidFinishLoading(self)
     }
 
-    override func stopLoading() { Self.stopped?.fulfill() }
+    override func stopLoading() {
+        let expectation = Self.stopLock.withLock {
+            let expectation = Self.stopped
+            Self.stopped = nil
+            return expectation
+        }
+        expectation?.fulfill()
+    }
 }
 
 private extension URLRequest {

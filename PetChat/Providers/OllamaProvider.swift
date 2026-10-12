@@ -56,9 +56,9 @@ final class OllamaProvider: ChatProvider, @unchecked Sendable {
             let task = Task {
                 do {
                     let currentImages = request.messages.last?.attachmentIDs ?? []
+                    guard currentImages.allSatisfy({ request.imageData[$0] != nil }) else { throw OllamaError.missingImage }
+                    let details = try await modelDetails(request.modelID)
                     if !currentImages.isEmpty {
-                        guard currentImages.allSatisfy({ request.imageData[$0] != nil }) else { throw OllamaError.missingImage }
-                        let details = try await modelDetails(request.modelID)
                         guard details.capabilities?.contains("vision") == true else { throw OllamaError.unsupportedImages }
                     }
 
@@ -75,6 +75,7 @@ final class OllamaProvider: ChatProvider, @unchecked Sendable {
                     let body = try JSONSerialization.data(withJSONObject: [
                         "model": request.modelID,
                         "messages": messages,
+                        "options": ["num_ctx": details.contextWindowTokens],
                         "stream": true
                     ])
                     var urlRequest = URLRequest(url: endpoint.appending(path: "/api/chat"))
@@ -156,11 +157,15 @@ final class OllamaProvider: ChatProvider, @unchecked Sendable {
         let line = line.last == 13 ? line.dropLast() : line[...]
         guard !line.isEmpty else { return }
         guard !terminal, let event = try? JSONDecoder().decode(ChatChunk.self, from: line),
-              event.model == modelID, let done = event.done,
-              event.message?.role == "assistant", let content = event.message?.content else {
+              event.model == modelID, let done = event.done else {
             throw OllamaError.invalidStream
         }
-        if !content.isEmpty { continuation.yield(.textDelta(content)) }
+        if let message = event.message {
+            guard message.role == "assistant", let content = message.content else { throw OllamaError.invalidStream }
+            if !content.isEmpty { continuation.yield(.textDelta(content)) }
+        } else if !done {
+            throw OllamaError.invalidStream
+        }
         if done { terminal = true }
     }
 }
@@ -172,7 +177,7 @@ private struct Tags: Decodable {
 
 private struct ModelDetails: Decodable {
     let capabilities: [String]?
-    let contextWindowTokens: Int?
+    let contextWindowTokens: Int
 
     enum CodingKeys: String, CodingKey {
         case capabilities
@@ -197,9 +202,10 @@ private struct ModelDetails: Decodable {
                 .filter { $0.stringValue.hasSuffix(".context_length") }
                 .compactMap { try? info.decode(Int.self, forKey: $0) }
                 .first
-            contextWindowTokens = [modelContext, configuredContext].compactMap { $0 }.filter { $0 > 0 }.min()
+            let requested = configuredContext.flatMap { $0 > 0 ? $0 : nil } ?? 4_096
+            contextWindowTokens = min(modelContext.flatMap { $0 > 0 ? $0 : nil } ?? requested, requested)
         } else {
-            contextWindowTokens = configuredContext.flatMap { $0 > 0 ? $0 : nil }
+            contextWindowTokens = configuredContext.flatMap { $0 > 0 ? $0 : nil } ?? 4_096
         }
     }
 
