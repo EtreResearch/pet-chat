@@ -1,9 +1,10 @@
 import AppKit
 import SwiftUI
 
-struct PetDisplay {
+struct PetDisplay: Identifiable {
     let id: CGDirectDisplayID
     let visibleFrame: CGRect
+    var name = ""
 }
 
 struct PetPosition {
@@ -44,16 +45,20 @@ final class PetPanelController: NSObject {
     let chatPanel: ChatFloatingPanel
     private let model: AppModel
     private let defaults: UserDefaults
+    private let displayProvider: () -> [PetDisplay]
+    private let fullScreenProvider: (CGDirectDisplayID?) -> Bool
     private(set) var selectedDisplayID: CGDirectDisplayID?
     private var wantsPetVisible = true
     private var fullScreen = false
     private var summonedInFullScreen = false
     private var chatContentInstalled = false
 
-    private var displays: [PetDisplay] {
+    var displays: [PetDisplay] { displayProvider() }
+
+    static var currentDisplays: [PetDisplay] {
         NSScreen.screens.compactMap { screen in
             guard let id = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? UInt32 else { return nil }
-            return PetDisplay(id: id, visibleFrame: screen.visibleFrame)
+            return PetDisplay(id: id, visibleFrame: screen.visibleFrame, name: screen.localizedName)
         }
     }
     private var positions: [CGDirectDisplayID: CGPoint] {
@@ -67,9 +72,13 @@ final class PetPanelController: NSObject {
         return result
     }
 
-    init(model: AppModel, defaults: UserDefaults = .standard) {
+    init(model: AppModel, defaults: UserDefaults = .standard,
+         displayProvider: @escaping () -> [PetDisplay] = { PetPanelController.currentDisplays },
+         fullScreenProvider: @escaping (CGDirectDisplayID?) -> Bool = { PetPanelController.hasFullScreenWindow(on: $0) }) {
         self.model = model
         self.defaults = defaults
+        self.displayProvider = displayProvider
+        self.fullScreenProvider = fullScreenProvider
         petPanel = NSPanel(contentRect: CGRect(x: 0, y: 0, width: 64, height: 64),
                            styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
         chatPanel = ChatFloatingPanel(contentRect: CGRect(x: 0, y: 0, width: 340, height: 420),
@@ -97,7 +106,6 @@ final class PetPanelController: NSObject {
                                                name: NSApplication.didResignActiveNotification, object: nil)
         NSWorkspace.shared.notificationCenter.addObserver(self, selector: #selector(spaceChanged),
                                                           name: NSWorkspace.activeSpaceDidChangeNotification, object: nil)
-        spaceChanged()
     }
 
     deinit { NotificationCenter.default.removeObserver(self); NSWorkspace.shared.notificationCenter.removeObserver(self) }
@@ -153,6 +161,7 @@ final class PetPanelController: NSObject {
         defaults.set(position.displayID, forKey: "PetChat.selectedDisplayID")
         petPanel.setFrameOrigin(position.origin)
         placeChat()
+        spaceChanged()
     }
 
     func movePet(to origin: CGPoint) {
@@ -184,10 +193,10 @@ final class PetPanelController: NSObject {
         return view?.subviews.lazy.compactMap { textEditor(in: $0) }.first
     }
 
-    @objc private func displaysChanged() { repositionPet(for: selectedDisplayID ?? 0); spaceChanged() }
+    @objc private func displaysChanged() { repositionPet(for: selectedDisplayID ?? 0) }
     @objc private func deactivated() { applicationDidDeactivate() }
     @objc private func spaceChanged() {
-        activeSpaceDidChange(isFullScreen: Self.hasFullScreenWindow(on: selectedDisplayID))
+        activeSpaceDidChange(isFullScreen: fullScreenProvider(selectedDisplayID))
     }
 
     // Window metadata is sufficient; no screen pixels or accessibility permission are read.

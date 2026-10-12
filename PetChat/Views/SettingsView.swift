@@ -8,6 +8,7 @@ struct SettingsView: View {
     @State private var shortcut: Shortcut
     @State private var error: String?
     @State private var displayID: CGDirectDisplayID
+    @State private var displays: [PetDisplay]
 
     init(shortcutController: GlobalShortcutController, panelController: PetPanelController, initialError: String? = nil) {
         self.shortcutController = shortcutController
@@ -15,6 +16,7 @@ struct SettingsView: View {
         _shortcut = State(initialValue: shortcutController.shortcut ?? GlobalShortcutController.savedShortcut())
         _error = State(initialValue: initialError)
         _displayID = State(initialValue: panelController.selectedDisplayID ?? 0)
+        _displays = State(initialValue: panelController.displays)
     }
 
     var body: some View {
@@ -35,16 +37,19 @@ struct SettingsView: View {
                 .font(.caption).foregroundStyle(.secondary)
             if let error { Text(error).foregroundStyle(.red).accessibilityLabel(error) }
             Picker("Pet display", selection: $displayID) {
-                ForEach(NSScreen.screens, id: \.self) { screen in
-                    if let id = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? UInt32 {
-                        Text(screen.localizedName).tag(id)
-                    }
+                ForEach(displays) { display in
+                    Text(display.name).tag(display.id)
                 }
             }
             .onChange(of: displayID) { _, id in panelController.repositionPet(for: id) }
         }
         .padding(20)
         .frame(width: 400)
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didChangeScreenParametersNotification)
+            .receive(on: RunLoop.main)) { _ in
+                displays = panelController.displays
+                displayID = panelController.selectedDisplayID ?? 0
+            }
     }
 }
 

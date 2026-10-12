@@ -1,4 +1,6 @@
 import AppKit
+import ApplicationServices
+import SwiftUI
 import SwiftData
 import XCTest
 @testable import PetChat
@@ -54,6 +56,92 @@ final class PetPanelTests: XCTestCase {
         controller.activeSpaceDidChange(isFullScreen: false)
         XCTAssertTrue(controller.petPanel.isVisible)
         XCTAssertFalse(controller.chatPanel.isVisible)
+    }
+
+    func testChangingDesktopToFullScreenDisplayHidesUntilSummoned() throws {
+        let panel = PetPanelController(model: try makeModel(), defaults: UserDefaults(suiteName: UUID().uuidString)!,
+                                       displayProvider: { self.twoDisplays }, fullScreenProvider: { $0 == 2 })
+        defer { panel.hidePet() }
+        panel.showChat()
+        panel.repositionPet(for: 2)
+        XCTAssertFalse(panel.petPanel.isVisible)
+        XCTAssertFalse(panel.chatPanel.isVisible)
+        panel.showChat()
+        XCTAssertTrue(panel.petPanel.isVisible)
+        XCTAssertTrue(panel.chatPanel.isVisible)
+        panel.collapseChat(preservingDraft: true)
+        XCTAssertFalse(panel.petPanel.isVisible)
+    }
+
+    func testChangingFullScreenToDesktopDisplayRestoresPetOnly() throws {
+        let defaults = UserDefaults(suiteName: UUID().uuidString)!
+        defaults.set(2, forKey: "PetChat.selectedDisplayID")
+        let panel = PetPanelController(model: try makeModel(), defaults: defaults,
+                                       displayProvider: { self.twoDisplays }, fullScreenProvider: { $0 == 2 })
+        defer { panel.hidePet() }
+        panel.showPetOnly()
+        XCTAssertFalse(panel.petPanel.isVisible)
+        panel.repositionPet(for: 1)
+        XCTAssertTrue(panel.petPanel.isVisible)
+        XCTAssertFalse(panel.chatPanel.isVisible)
+    }
+
+    func testFullScreenSummonDoesNotCarryToAnotherSelectedDisplay() throws {
+        let panel = PetPanelController(model: try makeModel(), defaults: UserDefaults(suiteName: UUID().uuidString)!,
+                                       displayProvider: { self.twoDisplays }, fullScreenProvider: { _ in true })
+        defer { panel.hidePet() }
+        panel.showChat()
+        XCTAssertTrue(panel.petPanel.isVisible)
+        panel.repositionPet(for: 2)
+        XCTAssertFalse(panel.petPanel.isVisible)
+        XCTAssertFalse(panel.chatPanel.isVisible)
+    }
+
+    func testOpenSettingsRefreshesDisplayListAndSelectionAfterDisconnect() async throws {
+        var displays = twoDisplays
+        let defaults = UserDefaults(suiteName: UUID().uuidString)!
+        defaults.set(2, forKey: "PetChat.selectedDisplayID")
+        let panel = PetPanelController(model: try makeModel(), defaults: defaults,
+                                       displayProvider: { displays }, fullScreenProvider: { _ in false })
+        defer { panel.hidePet() }
+        let shortcut = GlobalShortcutController(defaults: defaults, onSummon: {})
+        let host = NSHostingView(rootView: SettingsView(shortcutController: shortcut, panelController: panel))
+        host.frame = CGRect(x: 0, y: 0, width: 440, height: 230)
+        let window = NSWindow(contentRect: host.frame, styleMask: .titled, backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = host
+        window.makeKeyAndOrderFront(nil)
+        defer { window.contentView = nil; window.close() }
+        try await Task.sleep(for: .milliseconds(150))
+        XCTAssertTrue(accessibilityText(in: AXUIElementCreateApplication(getpid())).contains("Second display"))
+        displays = [twoDisplays[0]]
+        NotificationCenter.default.post(name: NSApplication.didChangeScreenParametersNotification, object: nil)
+        try await Task.sleep(for: .milliseconds(150))
+        XCTAssertEqual(panel.selectedDisplayID, 1)
+        let text = accessibilityText(in: AXUIElementCreateApplication(getpid()))
+        XCTAssertTrue(text.contains("First display"))
+        XCTAssertFalse(text.contains("Second display"))
+    }
+
+    private var twoDisplays: [PetDisplay] {
+        [PetDisplay(id: 1, visibleFrame: CGRect(x: 0, y: 40, width: 1000, height: 700), name: "First display"),
+         PetDisplay(id: 2, visibleFrame: CGRect(x: 1000, y: 40, width: 1000, height: 700), name: "Second display")]
+    }
+
+    private func accessibilityText(in element: AXUIElement, depth: Int = 0) -> [String] {
+        guard depth < 20 else { return [] }
+        var result: [String] = []
+        for attribute in [kAXTitleAttribute, kAXDescriptionAttribute, kAXValueAttribute] {
+            var value: CFTypeRef?
+            if AXUIElementCopyAttributeValue(element, attribute as CFString, &value) == .success,
+               let value = value as? String { result.append(value) }
+        }
+        var children: CFTypeRef?
+        if AXUIElementCopyAttributeValue(element, kAXChildrenAttribute as CFString, &children) == .success,
+           let children = children as? [AXUIElement] {
+            result += children.flatMap { accessibilityText(in: $0, depth: depth + 1) }
+        }
+        return result
     }
 
     func testDraggedPositionPersistsBySelectedDisplayAndClamps() throws {
