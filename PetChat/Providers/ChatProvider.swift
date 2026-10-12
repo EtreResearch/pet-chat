@@ -5,7 +5,7 @@ enum GenerationEvent {
     case completed
 }
 
-protocol ChatProvider {
+protocol ChatProvider: Sendable {
     var providerID: ProviderID { get }
     func availableModels() async throws -> [ProviderModel]
     func stream(_ request: GenerationRequest) -> AsyncThrowingStream<GenerationEvent, Error>
