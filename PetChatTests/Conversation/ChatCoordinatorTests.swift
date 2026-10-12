@@ -47,7 +47,93 @@ final class ChatCoordinatorTests: XCTestCase {
         }
         XCTAssertThrowsError(try fixture.attachments.load(image, threadID: thread.id))
     }
+
+    func testStopPersistsPartialResponseAndIgnoresLaterChunks() async throws {
+        let fixture = try Fixture()
+        let started = expectation(description: "provider started")
+        fixture.provider.events = [.textDelta("Partial")]
+        fixture.provider.holdOpen = true
+        fixture.provider.onStream = { started.fulfill() }
+        let thread = try fixture.coordinator.newThread(providerID: .ollama, modelID: "text")
+        let send = Task { try await fixture.coordinator.send(text: "Hi", attachmentIDs: [], threadID: thread.id) }
+        await fulfillment(of: [started], timeout: 2)
+
+        await fixture.coordinator.stop(threadID: thread.id)
+        fixture.provider.continuation?.yield(.textDelta(" ignored"))
+        fixture.provider.continuation?.finish()
+        try await send.value
+
+        let saved = try XCTUnwrap(fixture.store.load().first)
+        XCTAssertEqual(saved.messages.last?.text, "Partial")
+        XCTAssertEqual(saved.messages.last?.status, .stopped)
+    }
+
+    func testProviderFailureLeavesFailedTurnVisible() async throws {
+        let fixture = try Fixture()
+        fixture.provider.events = [.textDelta("Partial")]
+        fixture.provider.failure = TestFailure.disconnected
+        let thread = try fixture.coordinator.newThread(providerID: .ollama, modelID: "text")
+
+        do {
+            try await fixture.coordinator.send(text: "Hi", attachmentIDs: [], threadID: thread.id)
+            XCTFail("Expected provider failure")
+        } catch {
+            XCTAssertTrue(error is TestFailure)
+        }
+
+        let saved = try XCTUnwrap(fixture.store.load().first)
+        XCTAssertEqual(saved.messages.map(\.text), ["Hi", "Partial"])
+        XCTAssertEqual(saved.messages.last?.status, .failed)
+    }
+
+    func testInterruptedStreamReloadsAsFailedNotComplete() async throws {
+        let fixture = try Fixture()
+        fixture.provider.events = [.textDelta("unfinished")]
+        fixture.provider.failure = TestFailure.disconnected
+        let thread = try fixture.coordinator.newThread(providerID: .ollama, modelID: "text")
+        try? await fixture.coordinator.send(text: "Hi", attachmentIDs: [], threadID: thread.id)
+
+        let restored = try ChatCoordinator(providers: [.ollama: fixture.provider], store: fixture.store,
+                                           attachments: fixture.attachments)
+        XCTAssertEqual(restored.threads.first?.messages.last?.status, .failed)
+        XCTAssertEqual(restored.threads.first?.messages.last?.text, "unfinished")
+    }
+
+    func testAppModelKeepsDraftAndAttachmentAfterProviderError() async throws {
+        let fixture = try Fixture()
+        fixture.provider.failure = TestFailure.disconnected
+        let model = AppModel(coordinator: fixture.coordinator)
+        try model.select(providerID: .ollama, modelID: "text")
+        let thread = try XCTUnwrap(model.thread)
+        let image = try fixture.attachments.save(Data([1]), threadID: thread.id)
+        model.draft = "What is this?"
+        model.attachmentIDs = [image]
+
+        await model.submit()
+
+        XCTAssertEqual(model.draft, "What is this?")
+        XCTAssertEqual(model.attachmentIDs, [image])
+        XCTAssertNotNil(model.errorMessage)
+        XCTAssertEqual(try fixture.attachments.load(image, threadID: thread.id), Data([1]))
+    }
+
+    func testChangingModelStartsEmptyThread() throws {
+        let fixture = try Fixture()
+        let model = AppModel(coordinator: fixture.coordinator)
+        try model.select(providerID: .ollama, modelID: "text")
+        let firstID = try XCTUnwrap(model.thread?.id)
+        model.draft = "old question"
+
+        try model.select(providerID: .chatGPT, modelID: "gpt")
+
+        XCTAssertNotEqual(model.thread?.id, firstID)
+        XCTAssertEqual(model.thread?.messages, [])
+        XCTAssertEqual(model.thread?.providerID, .chatGPT)
+        XCTAssertEqual(model.draft, "")
+    }
 }
+
+private enum TestFailure: Error { case disconnected }
 
 @MainActor
 private final class Fixture {
@@ -79,6 +165,10 @@ private final class ScriptedProvider: ChatProvider, @unchecked Sendable {
     let providerID: ProviderID
     var events: [GenerationEvent] = [.completed]
     var requests: [GenerationRequest] = []
+    var holdOpen = false
+    var failure: Error?
+    var onStream: (() -> Void)?
+    var continuation: AsyncThrowingStream<GenerationEvent, Error>.Continuation?
 
     init(id: ProviderID) { providerID = id }
     func availableModels() async throws -> [ProviderModel] {
@@ -87,9 +177,12 @@ private final class ScriptedProvider: ChatProvider, @unchecked Sendable {
     func stream(_ request: GenerationRequest) -> AsyncThrowingStream<GenerationEvent, Error> {
         requests.append(request)
         return AsyncThrowingStream { continuation in
+            self.continuation = continuation
             events.forEach { continuation.yield($0) }
-            continuation.finish()
+            onStream?()
+            if let failure { continuation.finish(throwing: failure) }
+            else if !holdOpen { continuation.finish() }
         }
     }
-    func cancel(_ requestID: UUID) async {}
+    func cancel(_ requestID: UUID) async { continuation?.finish(throwing: CancellationError()) }
 }
