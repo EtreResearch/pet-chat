@@ -1,11 +1,11 @@
 import XCTest
 
-final class AppLaunchTests: XCTestCase {
+final class AppLaunchTests: IsolatedUITestCase {
+    override var opensChatOnLaunch: Bool { false }
     @MainActor
-    func testAppLaunchesWithPetVisible() {
-        let app = XCUIApplication()
-        app.launch()
+    func testAppLaunchesWithPetVisible() throws {
 
-        XCTAssertTrue(app.descendants(matching: .any)["Pet"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["Pet"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["Pet"].isHittable)
     }
 }

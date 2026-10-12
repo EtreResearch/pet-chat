@@ -12,6 +12,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
+        #if DEBUG
+        if let path = ProcessInfo.processInfo.environment["PET_CHAT_UI_ROOT"] {
+            do {
+                let fixture = try UITestFixture(root: URL(fileURLWithPath: path, isDirectory: true))
+                startDesktop(model: fixture.model, defaults: fixture.defaults, fullScreenProvider: { _ in false })
+                fixture.model.captureRegion = { UITestFixture.image() }
+                if ProcessInfo.processInfo.environment["PET_CHAT_UI_OPEN_CHAT"] == "1" {
+                    panelController?.showChat()
+                }
+            } catch { preconditionFailure("UI fixture could not start: \(error)") }
+            return
+        }
+        if NSClassFromString("XCTestCase") != nil { return }
+        #endif
         do {
             let attachments = AttachmentStore()
             let store = try LocalChatStore()
@@ -28,10 +42,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    func startDesktop(model: AppModel, defaults: UserDefaults = .standard) {
+    func startDesktop(model: AppModel, defaults: UserDefaults = .standard,
+                      fullScreenProvider: @escaping (CGDirectDisplayID?) -> Bool = { PetPanelController.hasFullScreenWindow(on: $0) }) {
         guard panelController == nil else { return }
         self.model = model
-        let panel = PetPanelController(model: model, defaults: defaults)
+        let panel = PetPanelController(model: model, defaults: defaults, fullScreenProvider: fullScreenProvider)
         panelController = panel
         let shortcut = GlobalShortcutController(defaults: defaults, onSummon: { [weak panel] in panel?.showChat() })
         shortcutController = shortcut

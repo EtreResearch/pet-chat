@@ -10,6 +10,7 @@ final class AppModel {
     private let auth: ChatGPTOAuthClient
     private var isShuttingDown = false
     private var captureTask: Task<Data?, Error>?
+    private let signOut: @MainActor () async throws -> Void
     private let signIn: @MainActor () async throws -> Void
     private(set) var currentThreadID: UUID?
     private(set) var selectedProviderID: ProviderID = .ollama
@@ -39,13 +40,15 @@ final class AppModel {
     }
 
     init(coordinator: ChatCoordinator, auth: ChatGPTOAuthClient = ChatGPTOAuthClient(),
-         defaults: UserDefaults = .standard, signIn: (@MainActor () async throws -> Void)? = nil) {
+         defaults: UserDefaults = .standard, signIn: (@MainActor () async throws -> Void)? = nil,
+         loginItemController: LoginItemController? = nil, signOut: (@MainActor () async throws -> Void)? = nil) {
         self.coordinator = coordinator
         self.auth = auth
         self.defaults = defaults
         textSize = defaults.double(forKey: "PetChat.textSize") == 17 ? 17 : 13
-        loginItemController = LoginItemController(defaults: defaults)
+        self.loginItemController = loginItemController ?? LoginItemController(defaults: defaults)
         self.signIn = signIn ?? { _ = try await auth.signIn() }
+        self.signOut = signOut ?? { try await auth.signOut() }
         if let last = coordinator.threads.last {
             currentThreadID = last.id
             selectedProviderID = last.providerID
@@ -227,7 +230,7 @@ final class AppModel {
             modelLoadProviderID = nil
         }
         if selectedProviderID == .chatGPT { activeSubmissionID = nil }
-        do { try await auth.signOut() } catch { report(error) }
+        do { try await signOut() } catch { report(error) }
         do { try await coordinator.stopAll(providerID: .chatGPT) } catch { report(error) }
         if selectedProviderID == .chatGPT {
             submissionTask?.cancel()
