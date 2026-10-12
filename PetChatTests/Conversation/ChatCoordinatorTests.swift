@@ -28,7 +28,8 @@ final class ChatCoordinatorTests: XCTestCase {
 
         let request = try XCTUnwrap(fixture.otherProvider.requests.last)
         XCTAssertEqual(request.modelID, "gpt")
-        XCTAssertEqual(request.messages.map(\.text), ["second question"])
+        XCTAssertEqual(request.messages.count, 1)
+        XCTAssertTrue(request.messages[0].text.hasSuffix("second question"))
         XCTAssertTrue(try XCTUnwrap(fixture.store.load().first { $0.id == second.id }).messages.first?.text == "second question")
     }
 
@@ -145,7 +146,8 @@ final class ChatCoordinatorTests: XCTestCase {
 
         await model.retry()
 
-        XCTAssertEqual(fixture.provider.requests.last?.messages.map(\.text), ["Question"])
+        XCTAssertEqual(fixture.provider.requests.last?.messages.count, 1)
+        XCTAssertTrue(fixture.provider.requests.last?.messages[0].text.hasSuffix("Question") == true)
         XCTAssertEqual(model.thread?.messages.map(\.text), ["Question", "Working"])
         XCTAssertEqual(model.draft, "")
     }
@@ -182,6 +184,63 @@ final class ChatCoordinatorTests: XCTestCase {
         XCTAssertTrue(fixture.provider.cancelled)
         try await send.value
         XCTAssertEqual(try fixture.store.load().first?.messages.last?.status, .failed)
+    }
+
+    func testAppModelPreservesEditedDraftAndBlocksChatSwitchDuringSend() async throws {
+        let fixture = try Fixture()
+        let started = expectation(description: "stream started")
+        fixture.provider.holdOpen = true
+        fixture.provider.onStream = { started.fulfill() }
+        let model = AppModel(coordinator: fixture.coordinator)
+        try model.select(providerID: .ollama, modelID: "text")
+        let firstID = model.thread?.id
+        model.draft = "Original"
+        let send = Task { await model.submit() }
+        await fulfillment(of: [started], timeout: 2)
+        model.draft = "Next question"
+
+        XCTAssertThrowsError(try model.select(providerID: .chatGPT, modelID: "gpt"))
+        XCTAssertEqual(model.thread?.id, firstID)
+        fixture.provider.continuation?.yield(.completed)
+        fixture.provider.continuation?.finish()
+        await send.value
+        XCTAssertEqual(model.draft, "Next question")
+    }
+
+    func testOlderModelDiscoveryCannotReplaceNewProviderModels() async throws {
+        let fixture = try Fixture()
+        let started = expectation(description: "old discovery started")
+        fixture.provider.holdModels = true
+        fixture.provider.onModels = { started.fulfill() }
+        let model = AppModel(coordinator: fixture.coordinator)
+        let old = Task { await model.loadModels(for: .ollama) }
+        await fulfillment(of: [started], timeout: 2)
+
+        await model.loadModels(for: .chatGPT)
+        fixture.provider.modelsGate?.resume()
+        await old.value
+        XCTAssertEqual(model.models.map(\.id), ["gpt"])
+    }
+
+    func testConcisePromptAndTellMeMoreStayInSameChat() async throws {
+        let fixture = try Fixture()
+        fixture.provider.events = [.textDelta("Short answer"), .completed]
+        let model = AppModel(coordinator: fixture.coordinator)
+        try model.select(providerID: .ollama, modelID: "text")
+        let originalID = model.thread?.id
+        model.draft = "Why?"
+
+        await model.submit()
+        let firstRequest = try XCTUnwrap(fixture.provider.requests.last)
+        XCTAssertTrue(firstRequest.messages.last?.text.contains("concise") == true)
+        XCTAssertTrue(firstRequest.messages.last?.text.contains("Why?") == true)
+        XCTAssertEqual(model.thread?.messages.first?.text, "Why?")
+
+        await model.tellMeMore()
+        let followup = try XCTUnwrap(fixture.provider.requests.last)
+        XCTAssertEqual(model.thread?.id, originalID)
+        XCTAssertTrue(followup.messages.last?.text.contains("more detail") == true)
+        XCTAssertEqual(model.thread?.messages.count, 4)
     }
 }
 

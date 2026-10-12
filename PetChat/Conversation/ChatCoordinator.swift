@@ -3,6 +3,7 @@ import Observation
 
 @MainActor @Observable
 final class ChatCoordinator {
+    static let expansionQuestion = "Tell me more about your last answer."
     enum Error: LocalizedError {
         case missingThread, missingProvider, missingModel, busy, emptyMessage, incompleteResponse
 
@@ -72,7 +73,10 @@ final class ChatCoordinator {
            updated.messages.last?.status == .failed {
             updated.messages.removeLast(2)
         }
-        let prompt = ContextBuilder.build(thread: updated, currentText: text, currentAttachmentIDs: attachmentIDs,
+        let promptText = text == Self.expansionQuestion
+            ? "Give more detail about your previous answer.\n\n\(text)"
+            : "Answer concisely in one to three sentences or a few short bullets.\n\n\(text)"
+        let prompt = ContextBuilder.build(thread: updated, currentText: promptText, currentAttachmentIDs: attachmentIDs,
                                           contextWindowTokens: model.contextWindowTokens)
         let request = GenerationRequest(id: UUID(), modelID: thread.modelID, messages: prompt, imageData: images)
         updated.messages.append(ChatMessage(role: .user, text: text, attachmentIDs: attachmentIDs))

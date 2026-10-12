@@ -1,0 +1,67 @@
+import SwiftUI
+
+struct ChatPanelView: View {
+    @Bindable var model: AppModel
+    let onClose: () -> Void
+    let onChangeModel: () -> Void
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack {
+                VStack(alignment: .leading) {
+                    Text("Pet Chat").font(.headline)
+                    Text("\(model.selectedProviderID == .ollama ? "Ollama" : "ChatGPT") · \(model.selectedModelID)")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                Menu("Chat") {
+                    Button("New Chat") { do { try model.newChat() } catch { model.report(error) } }
+                    Button("Delete Chat", role: .destructive) {
+                        do { try model.deleteCurrentChat() } catch { model.report(error) }
+                    }
+                    Button("Change model") { onChangeModel() }
+                }
+                .disabled(model.isLoading)
+                Button("Close") { onClose() }
+                    .accessibilityLabel("Close")
+            }
+            .padding(10)
+            Divider()
+            ScrollViewReader { proxy in
+                ScrollView {
+                    LazyVStack(spacing: 8) {
+                        ForEach(model.thread?.messages ?? []) { message in
+                            MessageRowView(message: message).id(message.id)
+                        }
+                        if model.isLoading {
+                            ProgressView("Thinking").frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                    }
+                    .padding(10)
+                }
+                .onChange(of: model.thread?.messages.last?.text) { _, _ in
+                    if let id = model.thread?.messages.last?.id { proxy.scrollTo(id, anchor: .bottom) }
+                }
+            }
+            if let error = model.errorMessage {
+                HStack {
+                    Text(error).font(.caption).foregroundStyle(.red)
+                    Spacer()
+                    Button("Retry") { Task { await model.retry() } }
+                    if model.selectedProviderID == .chatGPT {
+                        Button("Reconnect") { Task { await model.connectChatGPT() } }
+                    }
+                }
+                .padding(.horizontal, 10)
+            }
+            Button("Tell me more") { Task { await model.tellMeMore() } }
+                .disabled(model.isLoading || !model.draft.isEmpty || model.thread?.messages.last?.role != .pet || model.thread?.messages.last?.status != .complete)
+                .accessibilityLabel("Tell me more")
+                .padding(.bottom, 4)
+            Divider()
+            ComposerView(model: model)
+        }
+        .frame(width: 340, height: 420)
+    }
+}

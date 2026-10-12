@@ -13,6 +13,7 @@ final class AppModel {
     private(set) var isLoading = false
     private(set) var errorMessage: String?
     private(set) var models: [ProviderModel] = []
+    private var modelLoadID: UUID?
 
     var thread: ChatThread? { coordinator.threads.first { $0.id == currentThreadID } }
 
@@ -27,10 +28,17 @@ final class AppModel {
     }
 
     func loadModels(for providerID: ProviderID) async {
-        selectedProviderID = providerID
+        let loadID = UUID()
+        modelLoadID = loadID
         models = []
-        do { models = try await coordinator.models(for: providerID); errorMessage = nil }
-        catch { errorMessage = error.localizedDescription }
+        do {
+            let available = try await coordinator.models(for: providerID)
+            guard modelLoadID == loadID else { return }
+            models = available
+            errorMessage = nil
+        } catch {
+            if modelLoadID == loadID { errorMessage = error.localizedDescription }
+        }
     }
 
     func connectChatGPT() async {
@@ -41,6 +49,7 @@ final class AppModel {
     }
 
     func select(providerID: ProviderID, modelID: String) throws {
+        guard !isLoading else { throw ChatCoordinator.Error.busy }
         let new = try coordinator.newThread(providerID: providerID, modelID: modelID)
         currentThreadID = new.id
         selectedProviderID = providerID
@@ -53,6 +62,7 @@ final class AppModel {
     func newChat() throws { try select(providerID: selectedProviderID, modelID: selectedModelID) }
 
     func deleteCurrentChat() throws {
+        guard !isLoading else { throw ChatCoordinator.Error.busy }
         guard let id = currentThreadID else { return }
         try coordinator.deleteThread(id)
         currentThreadID = coordinator.threads.last?.id
@@ -71,7 +81,8 @@ final class AppModel {
         defer { isLoading = false }
         do {
             try await coordinator.send(text: text, attachmentIDs: images, threadID: id)
-            if thread?.messages.last?.status == .complete {
+            if currentThreadID == id, thread?.messages.last?.status == .complete,
+               draft == text, attachmentIDs == images {
                 draft = ""
                 attachmentIDs = []
             }
@@ -81,7 +92,7 @@ final class AppModel {
     func retry() async { await submit() }
 
     func tellMeMore() async {
-        draft = "Tell me more about your last answer."
+        draft = ChatCoordinator.expansionQuestion
         await submit()
     }
 
@@ -90,4 +101,6 @@ final class AppModel {
         do { try await coordinator.stop(threadID: id) }
         catch { errorMessage = error.localizedDescription }
     }
+
+    func report(_ error: Error) { errorMessage = error.localizedDescription }
 }
