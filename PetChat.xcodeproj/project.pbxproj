@@ -11,6 +11,15 @@
 		A10000000000000000000003 = {isa = PBXBuildFile; fileRef = A20000000000000000000003; };
 		A10000000000000000000004 = {isa = PBXBuildFile; fileRef = A20000000000000000000004; };
 		A10000000000000000000005 = {isa = PBXBuildFile; fileRef = A20000000000000000000005; };
+		A10000000000000000000006 = {isa = PBXBuildFile; fileRef = A20000000000000000000009; };
+		A10000000000000000000007 = {isa = PBXBuildFile; fileRef = A20000000000000000000010; };
+		A10000000000000000000008 = {isa = PBXBuildFile; fileRef = A20000000000000000000011; };
+		A10000000000000000000009 = {isa = PBXBuildFile; fileRef = A20000000000000000000012; };
+		A10000000000000000000010 = {isa = PBXBuildFile; fileRef = A20000000000000000000013; };
+		A10000000000000000000011 = {isa = PBXBuildFile; fileRef = A20000000000000000000014; };
+		A10000000000000000000012 = {isa = PBXBuildFile; fileRef = A20000000000000000000015; };
+		A10000000000000000000013 = {isa = PBXBuildFile; fileRef = A20000000000000000000016; };
+		A10000000000000000000014 = {isa = PBXBuildFile; fileRef = A20000000000000000000017; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -26,6 +35,15 @@
 		A20000000000000000000006 = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = PetChat.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		A20000000000000000000007 = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = PetChatTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		A20000000000000000000008 = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = PetChatUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		A20000000000000000000009 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContextBuilderTests.swift; sourceTree = "<group>"; };
+		A20000000000000000000010 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatThreadTests.swift; sourceTree = "<group>"; };
+		A20000000000000000000011 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProviderID.swift; sourceTree = "<group>"; };
+		A20000000000000000000012 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatThread.swift; sourceTree = "<group>"; };
+		A20000000000000000000013 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatMessage.swift; sourceTree = "<group>"; };
+		A20000000000000000000014 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProviderModel.swift; sourceTree = "<group>"; };
+		A20000000000000000000015 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GenerationRequest.swift; sourceTree = "<group>"; };
+		A20000000000000000000016 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatProvider.swift; sourceTree = "<group>"; };
+		A20000000000000000000017 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContextBuilder.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -36,10 +54,14 @@
 
 /* Begin PBXGroup section */
 		A50000000000000000000001 = {isa = PBXGroup; children = (A50000000000000000000002, A50000000000000000000005, A50000000000000000000006, A50000000000000000000007); sourceTree = "<group>"; };
-		A50000000000000000000002 = {isa = PBXGroup; children = (A50000000000000000000003, A50000000000000000000004); path = PetChat; sourceTree = "<group>"; };
+		A50000000000000000000002 = {isa = PBXGroup; children = (A50000000000000000000003, A50000000000000000000004, A50000000000000000000009, A50000000000000000000010, A50000000000000000000011); path = PetChat; sourceTree = "<group>"; };
 		A50000000000000000000003 = {isa = PBXGroup; children = (A20000000000000000000001, A20000000000000000000002); path = App; sourceTree = "<group>"; };
 		A50000000000000000000004 = {isa = PBXGroup; children = (A20000000000000000000003); path = Views; sourceTree = "<group>"; };
-		A50000000000000000000005 = {isa = PBXGroup; children = (A20000000000000000000004); path = PetChatTests; sourceTree = "<group>"; };
+		A50000000000000000000005 = {isa = PBXGroup; children = (A20000000000000000000004, A50000000000000000000008); path = PetChatTests; sourceTree = "<group>"; };
+		A50000000000000000000008 = {isa = PBXGroup; children = (A20000000000000000000009, A20000000000000000000010); path = Domain; sourceTree = "<group>"; };
+		A50000000000000000000009 = {isa = PBXGroup; children = (A20000000000000000000011, A20000000000000000000012, A20000000000000000000013, A20000000000000000000014, A20000000000000000000015); path = Domain; sourceTree = "<group>"; };
+		A50000000000000000000010 = {isa = PBXGroup; children = (A20000000000000000000016); path = Providers; sourceTree = "<group>"; };
+		A50000000000000000000011 = {isa = PBXGroup; children = (A20000000000000000000017); path = Conversation; sourceTree = "<group>"; };
 		A50000000000000000000006 = {isa = PBXGroup; children = (A20000000000000000000005); path = PetChatUITests; sourceTree = "<group>"; };
 		A50000000000000000000007 = {isa = PBXGroup; children = (A20000000000000000000006, A20000000000000000000007, A20000000000000000000008); name = Products; sourceTree = "<group>"; };
 /* End PBXGroup section */
@@ -61,8 +83,8 @@
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
-		A60000000000000000000001 = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (A10000000000000000000001, A10000000000000000000002, A10000000000000000000003); runOnlyForDeploymentPostprocessing = 0; };
-		A60000000000000000000002 = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (A10000000000000000000004); runOnlyForDeploymentPostprocessing = 0; };
+		A60000000000000000000001 = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (A10000000000000000000001, A10000000000000000000002, A10000000000000000000003, A10000000000000000000008, A10000000000000000000009, A10000000000000000000010, A10000000000000000000011, A10000000000000000000012, A10000000000000000000013, A10000000000000000000014); runOnlyForDeploymentPostprocessing = 0; };
+		A60000000000000000000002 = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (A10000000000000000000004, A10000000000000000000006, A10000000000000000000007); runOnlyForDeploymentPostprocessing = 0; };
 		A60000000000000000000003 = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (A10000000000000000000005); runOnlyForDeploymentPostprocessing = 0; };
 /* End PBXSourcesBuildPhase section */
 
@@ -74,7 +96,7 @@
 /* Begin XCBuildConfiguration section */
 		AA0000000000000000000001 = {isa = XCBuildConfiguration; buildSettings = {CLANG_ENABLE_MODULES = YES; MACOSX_DEPLOYMENT_TARGET = 14.0; SDKROOT = macosx; SWIFT_VERSION = 6.0; }; name = Debug; };
 		AA0000000000000000000002 = {isa = XCBuildConfiguration; buildSettings = {CLANG_ENABLE_MODULES = YES; MACOSX_DEPLOYMENT_TARGET = 14.0; SDKROOT = macosx; SWIFT_VERSION = 6.0; }; name = Release; };
-		AA0000000000000000000003 = {isa = XCBuildConfiguration; buildSettings = {GENERATE_INFOPLIST_FILE = YES; INFOPLIST_KEY_CFBundleDisplayName = "Pet Chat"; INFOPLIST_KEY_LSUIElement = YES; PRODUCT_BUNDLE_IDENTIFIER = com.etre.pet-chat; PRODUCT_NAME = "$(TARGET_NAME)"; SWIFT_EMIT_LOC_STRINGS = YES; }; name = Debug; };
+		AA0000000000000000000003 = {isa = XCBuildConfiguration; buildSettings = {ENABLE_TESTABILITY = YES; GENERATE_INFOPLIST_FILE = YES; INFOPLIST_KEY_CFBundleDisplayName = "Pet Chat"; INFOPLIST_KEY_LSUIElement = YES; PRODUCT_BUNDLE_IDENTIFIER = com.etre.pet-chat; PRODUCT_NAME = "$(TARGET_NAME)"; SWIFT_EMIT_LOC_STRINGS = YES; }; name = Debug; };
 		AA0000000000000000000004 = {isa = XCBuildConfiguration; buildSettings = {GENERATE_INFOPLIST_FILE = YES; INFOPLIST_KEY_CFBundleDisplayName = "Pet Chat"; INFOPLIST_KEY_LSUIElement = YES; PRODUCT_BUNDLE_IDENTIFIER = com.etre.pet-chat; PRODUCT_NAME = "$(TARGET_NAME)"; SWIFT_EMIT_LOC_STRINGS = YES; }; name = Release; };
 		AA0000000000000000000005 = {isa = XCBuildConfiguration; buildSettings = {BUNDLE_LOADER = "$(TEST_HOST)"; GENERATE_INFOPLIST_FILE = YES; PRODUCT_BUNDLE_IDENTIFIER = com.etre.pet-chat-tests; PRODUCT_NAME = "$(TARGET_NAME)"; TEST_HOST = "$(BUILT_PRODUCTS_DIR)/PetChat.app/Contents/MacOS/PetChat"; }; name = Debug; };
 		AA0000000000000000000006 = {isa = XCBuildConfiguration; buildSettings = {BUNDLE_LOADER = "$(TEST_HOST)"; GENERATE_INFOPLIST_FILE = YES; PRODUCT_BUNDLE_IDENTIFIER = com.etre.pet-chat-tests; PRODUCT_NAME = "$(TARGET_NAME)"; TEST_HOST = "$(BUILT_PRODUCTS_DIR)/PetChat.app/Contents/MacOS/PetChat"; }; name = Release; };
