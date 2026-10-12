@@ -234,7 +234,7 @@ Automated coverage passed 114/114 after review and one fix round. Local ad-hoc s
 
 - [ ] **Step 1: Add failing tests** for login launch default-off/opt-in, provider/model restoration, chat-provider identity persistence across restart, sign-out, and reduced-motion behavior.
 - [ ] **Step 2: Run settings/accessibility/platform tests and confirm failure.**
-- [ ] **Step 3: Implement startup consent and controls, permission explanations, VoiceOver labels, Dynamic Type within the panel, contrast checks, reduced-motion handling, and clean interrupted-task shutdown.**
+- [ ] **Step 3: Implement startup consent and controls, permission explanations, VoiceOver labels, a persisted Settings Text size picker (Standard 13pt / Larger 17pt) for message text and composer within the compact scrollable panel, contrast checks, reduced-motion handling, and clean interrupted-task shutdown.**
 - [ ] **Step 4: Rerun tests and manually verify login prompt/settings, sign-out, screen permission recovery, VoiceOver, and Reduce Motion.**
 - [ ] **Step 5: Commit** `feat: finish setup, preferences, and accessibility`.
 
