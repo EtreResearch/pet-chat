@@ -13,6 +13,7 @@ final class PetPanelTests: XCTestCase {
         controller.showPetOnly()
         let view = try XCTUnwrap(controller.petPanel.contentView)
         view.layoutSubtreeIfNeeded()
+        XCTAssertTrue(view.isAccessibilityEnabled())
         XCTAssertTrue(view.acceptsFirstMouse(for: nil))
         XCTAssertEqual(view.accessibilityRole(), .button)
         XCTAssertTrue(view.hitTest(NSPoint(x: 32, y: 32)) === view)

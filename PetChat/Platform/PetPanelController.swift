@@ -303,6 +303,7 @@ private final class PetInteractionView: NSHostingView<PetSurface> {
     }
     override func mouseUp(with event: NSEvent) { if !dragged { onClick() } }
     override func accessibilityRole() -> NSAccessibility.Role? { .button }
+    override func isAccessibilityEnabled() -> Bool { true }
     override func accessibilityPerformPress() -> Bool { onClick(); return true }
 }
 
@@ -312,7 +313,6 @@ private struct PetSurface: View {
         PetCharacterView(isThinking: model.isLoading, completionID: model.thread?.messages.last.flatMap {
             $0.role == .pet && $0.status == .complete ? $0.id : nil
         })
-        .allowsHitTesting(false)
         .accessibilityHidden(true)
     }
 }
