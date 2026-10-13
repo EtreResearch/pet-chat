@@ -51,7 +51,7 @@ final class OpenAIPlanProviderTests: XCTestCase {
             XCTAssertEqual(content[0]["text"] as? String, "Look")
             XCTAssertEqual(content[1]["type"] as? String, "input_image")
             XCTAssertTrue(content[1]["image_url"] as? String == "data:image/png;base64,\(Data([137,80,78,71,13,10,26,10,1]).base64EncodedString())")
-            return (200, Self.sse([Self.created, Self.delta("Hi", sequence: 1), Self.delta(" there", sequence: 2), Self.completed("Hi there", sequence: 3)]))
+            return (200, Self.sse([Self.created, Self.delta("Hi", sequence: 1), Self.delta(" there", sequence: 2), Self.completed("Hi there", sequence: 3).replacingOccurrences(of: #""output":["#, with: #""output":[{"type":"reasoning","id":"rs_test","summary":[]},"#)]))
         }
         let request = GenerationRequest(id: UUID(), modelID: "vision", messages: [
             PromptMessage(role: .user, text: "Earlier", attachmentIDs: [old]),
@@ -108,6 +108,20 @@ final class OpenAIPlanProviderTests: XCTestCase {
         try await assertRejected([Self.created, Self.completed("", sequence: 1)])
     }
 
+    func testRejectsTruncatedTerminalMessageOutput() async throws {
+        for output in [#"{"type":"message"}"#,
+                       #"{"type":"message","id":"msg_test","role":"assistant","status":"completed"}"#,
+                       #"{"type":"message","id":"msg_test","role":"assistant","content":[{"type":"output_text","text":"partial"}]}"#,
+                       #"{"type":"message","id":"msg_test","role":"user","status":"completed","content":[{"type":"output_text","text":"partial"}]}"#,
+                       #"{"type":"message","role":"assistant","status":"completed","content":[{"type":"output_text","text":"partial"}]}"#,
+                       #"{"type":"message","id":"msg_test","role":"assistant","status":"completed","content":[{"type":"output_text"}]}"#,
+                       #"{"type":"message","id":"msg_test","role":"assistant","status":"completed","content":[{"type":"refusal"}]}"#,
+                       #"{"type":"reasoning","id":"rs_test","summary":[]}"#] {
+            let terminal = #"{"type":"response.completed","sequence_number":2,"response":{"id":"resp_test","object":"response","status":"completed","error":null,"output":[\#(output)]}}"#
+            try await assertRejected([Self.created, Self.delta("partial", sequence: 1), terminal])
+        }
+    }
+
     @MainActor
     func testRefusalDeltasAndFinalTextPersistOnceAndClearDraft() async throws {
         for deltas in [true, false] {
@@ -130,15 +144,18 @@ final class OpenAIPlanProviderTests: XCTestCase {
 
     @MainActor
     func testInvalidTerminalKeepsPartialTranscriptFailedAndDraftRetryable() async throws {
-        try await withAppModel(events: [Self.created, Self.delta("partial", sequence: 1), #"{"type":"response.completed","sequence_number":2}"#]) { model, store in
-            model.draft = "Keep my question"
-            await model.submit()
-            XCTAssertEqual(model.thread?.messages.last?.text, "partial")
-            XCTAssertEqual(model.thread?.messages.last?.status, .failed)
-            XCTAssertEqual(try store.load().first?.messages.last?.status, .failed)
-            XCTAssertEqual(model.draft, "Keep my question")
-            XCTAssertNotNil(model.errorMessage)
-            XCTAssertFalse(model.isLoading)
+        for terminal in [#"{"type":"response.completed","sequence_number":2}"#,
+                         #"{"type":"response.completed","sequence_number":2,"response":{"id":"resp_test","object":"response","status":"completed","error":null,"output":[{"type":"message"}]}}"#] {
+            try await withAppModel(events: [Self.created, Self.delta("partial", sequence: 1), terminal]) { model, store in
+                model.draft = "Keep my question"
+                await model.submit()
+                XCTAssertEqual(model.thread?.messages.last?.text, "partial")
+                XCTAssertEqual(model.thread?.messages.last?.status, .failed)
+                XCTAssertEqual(try store.load().first?.messages.last?.status, .failed)
+                XCTAssertEqual(model.draft, "Keep my question")
+                XCTAssertNotNil(model.errorMessage)
+                XCTAssertFalse(model.isLoading)
+            }
         }
     }
 

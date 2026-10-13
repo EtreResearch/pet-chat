@@ -185,7 +185,9 @@ final class OpenAIPlanProvider: ChatProvider, @unchecked Sendable {
             return false
         case "response.completed":
             guard let response = event.response, response.status == "completed", response.error == nil,
-                  let output = response.output, !output.isEmpty, state.hasText else { throw ChatGPTError.invalidResponse }
+                  let output = response.output, state.hasText else { throw ChatGPTError.invalidResponse }
+            let messages = output.filter { $0.type == "message" }
+            guard !messages.isEmpty, messages.allSatisfy(\.isCompleteMessage) else { throw ChatGPTError.invalidResponse }
             return true
         case "response.failed":
             if let code = event.response?.error?.code,
@@ -258,7 +260,31 @@ private struct StreamEvent: Decodable {
         let status: String?
         let output: [Output]?
         let error: Failure?
-        struct Output: Decodable { let type: String }
+        struct Output: Decodable {
+            let type: String
+            let id: String?
+            let role: String?
+            let status: String?
+            let content: [Content]?
+
+            var isCompleteMessage: Bool {
+                guard let id, !id.isEmpty, role == "assistant", status == "completed",
+                      let content, !content.isEmpty else { return false }
+                return content.allSatisfy { part in
+                    switch part.type {
+                    case "output_text": return part.text != nil
+                    case "refusal": return part.refusal != nil
+                    default: return false
+                    }
+                }
+            }
+
+            struct Content: Decodable {
+                let type: String
+                let text: String?
+                let refusal: String?
+            }
+        }
         struct Failure: Decodable { let code: String? }
     }
 }
