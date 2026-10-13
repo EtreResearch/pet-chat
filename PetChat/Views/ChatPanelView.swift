@@ -59,7 +59,7 @@ struct ChatPanelView: View {
                     Text(error).font(.caption).foregroundStyle(.primary)
                     Spacer()
                     if model.canRetrySubmission {
-                        Button("Retry") { Task { await model.submit() } }
+                        Button("Retry") { Task { await model.retry() } }
                     }
                     if model.selectedProviderID == .chatGPT {
                         Button("Reconnect") { Task { await model.connectChatGPT() } }

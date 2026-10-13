@@ -195,6 +195,143 @@ final class ChatCoordinatorTests: XCTestCase {
         XCTAssertEqual(model.draft, "")
     }
 
+    func testRegenerateReplacesLastReplyKeepingHistoryAndImages() async throws {
+        let fixture = try Fixture()
+        let thread = try fixture.coordinator.newThread(providerID: .ollama, modelID: "text")
+        fixture.provider.events = [.textDelta("First answer"), .completed]
+        try await fixture.coordinator.send(text: "First", attachmentIDs: [], threadID: thread.id)
+        let image = try fixture.attachments.save(testPNG(1), threadID: thread.id)
+        fixture.provider.events = [.textDelta("Old answer"), .completed]
+        try await fixture.coordinator.send(text: "Second", attachmentIDs: [image], threadID: thread.id)
+        let question = try XCTUnwrap(fixture.coordinator.threads.first?.messages[2])
+        fixture.provider.events = [.textDelta("Fresh answer"), .completed]
+
+        try await fixture.coordinator.regenerateLastReply(threadID: thread.id)
+
+        let saved = try XCTUnwrap(fixture.store.load().first)
+        XCTAssertEqual(saved.messages.map(\.text), ["First", "First answer", "Second", "Fresh answer"])
+        XCTAssertEqual(saved.messages[2].id, question.id)
+        XCTAssertEqual(saved.messages[2].attachmentIDs, [image])
+        XCTAssertEqual(saved.messages.last?.status, .complete)
+        XCTAssertEqual(try fixture.attachments.load(image, threadID: thread.id), testPNG(1))
+        let request = try XCTUnwrap(fixture.provider.requests.last)
+        XCTAssertEqual(request.imageData, [image: testPNG(1)])
+        XCTAssertEqual(request.messages.count, 3)
+        XCTAssertTrue(request.messages.last?.text.hasSuffix("Second") == true)
+        XCTAssertFalse(request.messages.contains { $0.text.contains("Old answer") })
+    }
+
+    func testRegenerateReplacesStoppedAndFailedReplies() async throws {
+        for stopped in [false, true] {
+            let fixture = try Fixture()
+            let thread = try fixture.coordinator.newThread(providerID: .ollama, modelID: "text")
+            fixture.provider.events = [.textDelta("Partial")]
+            if stopped {
+                let started = expectation(description: "provider started")
+                fixture.provider.holdOpen = true
+                fixture.provider.onStream = { started.fulfill() }
+                let send = Task { try await fixture.coordinator.send(text: "Hi", attachmentIDs: [], threadID: thread.id) }
+                await fulfillment(of: [started], timeout: 2)
+                try await fixture.coordinator.stop(threadID: thread.id)
+                try await send.value
+                fixture.provider.holdOpen = false
+                fixture.provider.onStream = nil
+            } else {
+                fixture.provider.failure = TestFailure.disconnected
+                try? await fixture.coordinator.send(text: "Hi", attachmentIDs: [], threadID: thread.id)
+                fixture.provider.failure = nil
+            }
+            XCTAssertEqual(fixture.coordinator.threads.first?.messages.last?.status, stopped ? .stopped : .failed)
+            fixture.provider.events = [.textDelta("Done"), .completed]
+
+            try await fixture.coordinator.regenerateLastReply(threadID: thread.id)
+
+            let saved = try XCTUnwrap(fixture.store.load().first)
+            XCTAssertEqual(saved.messages.map(\.text), ["Hi", "Done"])
+            XCTAssertEqual(saved.messages.last?.status, .complete)
+        }
+    }
+
+    func testRegenerateWithoutLastReplyThrowsWithoutGenerating() async throws {
+        let fixture = try Fixture()
+        let thread = try fixture.coordinator.newThread(providerID: .ollama, modelID: "text")
+
+        do {
+            try await fixture.coordinator.regenerateLastReply(threadID: thread.id)
+            XCTFail("Regenerated an empty chat")
+        } catch ChatCoordinator.Error.nothingToRegenerate {}
+        XCTAssertTrue(fixture.provider.requests.isEmpty)
+        XCTAssertEqual(fixture.coordinator.threads.first?.messages, [])
+    }
+
+    func testRegenerateWhileAnsweringThrowsBusy() async throws {
+        let fixture = try Fixture()
+        let started = expectation(description: "provider started")
+        fixture.provider.events = [.textDelta("Partial")]
+        fixture.provider.holdOpen = true
+        fixture.provider.onStream = { started.fulfill() }
+        let thread = try fixture.coordinator.newThread(providerID: .ollama, modelID: "text")
+        let send = Task { try await fixture.coordinator.send(text: "Hi", attachmentIDs: [], threadID: thread.id) }
+        await fulfillment(of: [started], timeout: 2)
+
+        do {
+            try await fixture.coordinator.regenerateLastReply(threadID: thread.id)
+            XCTFail("Regenerated while busy")
+        } catch ChatCoordinator.Error.busy {}
+        XCTAssertEqual(fixture.provider.requests.count, 1)
+        try await fixture.coordinator.stop(threadID: thread.id)
+        try await send.value
+    }
+
+    func testAppModelRegenerateFailureRetriesRegenerateNotDraft() async throws {
+        let fixture = try Fixture()
+        fixture.provider.events = [.textDelta("Old"), .completed]
+        let model = AppModel(coordinator: fixture.coordinator, auth: fixture.auth, defaults: fixture.defaults)
+        try model.select(providerID: .ollama, modelID: "text")
+        XCTAssertFalse(model.canRegenerate)
+        model.draft = "Question"
+        await model.submit()
+        XCTAssertTrue(model.canRegenerate)
+        model.draft = "Unsent draft"
+        fixture.provider.events = [.textDelta("broken")]
+        fixture.provider.failure = TestFailure.disconnected
+
+        await model.regenerateLastReply()
+
+        XCTAssertNotNil(model.errorMessage)
+        XCTAssertTrue(model.canRetrySubmission)
+        XCTAssertFalse(model.isLoading)
+        XCTAssertEqual(model.draft, "Unsent draft")
+        XCTAssertEqual(model.thread?.messages.last?.status, .failed)
+        fixture.provider.events = [.textDelta("Fresh"), .completed]
+        fixture.provider.failure = nil
+
+        await model.retry()
+
+        XCTAssertNil(model.errorMessage)
+        XCTAssertFalse(model.canRetrySubmission)
+        XCTAssertEqual(model.thread?.messages.map(\.text), ["Question", "Fresh"])
+        XCTAssertEqual(model.draft, "Unsent draft")
+        XCTAssertTrue(fixture.provider.requests.last?.messages.last?.text.hasSuffix("Question") == true)
+    }
+
+    func testAppModelRetryAfterSubmitFailureResubmitsDraft() async throws {
+        let fixture = try Fixture()
+        fixture.provider.failure = TestFailure.disconnected
+        let model = AppModel(coordinator: fixture.coordinator, auth: fixture.auth, defaults: fixture.defaults)
+        try model.select(providerID: .ollama, modelID: "text")
+        model.draft = "Question"
+        await model.submit()
+        XCTAssertTrue(model.canRetrySubmission)
+        fixture.provider.failure = nil
+        fixture.provider.events = [.textDelta("Answer"), .completed]
+
+        await model.retry()
+
+        XCTAssertEqual(model.thread?.messages.map(\.text), ["Question", "Answer"])
+        XCTAssertEqual(model.draft, "")
+    }
+
     func testDeletionDuringModelDiscoveryCannotResurrectThread() async throws {
         let fixture = try Fixture()
         let started = expectation(description: "model discovery started")

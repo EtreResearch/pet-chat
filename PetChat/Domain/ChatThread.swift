@@ -15,3 +15,12 @@ struct ChatThread: Codable, Identifiable, Equatable {
         self.messages = messages
     }
 }
+
+extension ChatThread {
+    /// The user message the last reply answers, when the chat ends with a user→pet turn.
+    var lastAnsweredQuestion: ChatMessage? {
+        guard messages.last?.role == .pet, messages.count >= 2,
+              messages[messages.count - 2].role == .user else { return nil }
+        return messages[messages.count - 2]
+    }
+}
