@@ -1,5 +1,17 @@
 import Foundation
 
+struct ChatGPTRegistration: Codable, Sendable {
+    let subject: String
+    let clientID: String
+    let hostID: String
+
+    init(_ credential: ChatGPTCredential) {
+        subject = credential.subject
+        clientID = credential.clientID
+        hostID = credential.hostID
+    }
+}
+
 struct ChatGPTCredential: Codable, Equatable, Sendable {
     let subject: String
     let clientID: String
@@ -18,6 +30,7 @@ enum ChatGPTError: LocalizedError {
     case signInFailed, invalidIdentity, missingPermission, noAccount
     case requestFailed(Int)
     case invalidResponse, incompleteResponse, usageLimit, unsupportedImages
+    case revocationUnconfirmed
 
     var errorDescription: String? {
         switch self {
@@ -30,6 +43,7 @@ enum ChatGPTError: LocalizedError {
         case .incompleteResponse: "ChatGPT stopped before completing the answer. Try again."
         case .usageLimit: "ChatGPT plan usage limit reached. Wait for the limit to reset, then retry."
         case .unsupportedImages: "ChatGPT accepts PNG, JPEG, GIF, or WebP images. Attach a supported image."
+        case .revocationUnconfirmed: "Signed out locally, but remote revocation could not be confirmed. Disconnect this app in ChatGPT Settings to end its remote session."
         }
     }
 }

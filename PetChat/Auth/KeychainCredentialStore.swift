@@ -67,6 +67,19 @@ final class KeychainCredentialStore: @unchecked Sendable {
         }
     }
 
+    func signedOutRegistration() throws -> ChatGPTRegistration? {
+        try Self.lock.withLock {
+            guard let data = try read("signed-out-registration") else { return nil }
+            return try JSONDecoder().decode(ChatGPTRegistration.self, from: data)
+        }
+    }
+
+    func retainRegistration(_ credential: ChatGPTCredential) throws {
+        try Self.lock.withLock {
+            try write(JSONEncoder().encode(ChatGPTRegistration(credential)), key: "signed-out-registration")
+        }
+    }
+
     func savePendingClientID(_ id: String?) throws {
         try Self.lock.withLock {
             if let id { try write(Data(id.utf8), key: "pending-client-id") }

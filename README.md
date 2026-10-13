@@ -49,6 +49,7 @@ The cat appears in the bottom-right corner, and a cat icon appears in the menu b
 - Your chats and images are stored only on your Mac, in `~/Library/Application Support/PetChat`. They are not encrypted.
 - With Ollama, nothing leaves your Mac.
 - With ChatGPT, your question, recent messages from the same chat, and any attached image go to OpenAI when you press **Send**. Your ChatGPT login is kept in the macOS Keychain.
+- **Sign out of ChatGPT** stops requests, attempts to end the remote session, and removes local tokens. The app keeps the account's registration for later sign-in. If remote revocation cannot be confirmed, Settings shows a warning to disconnect the app in ChatGPT Settings.
 
 ## For developers
 

@@ -36,7 +36,7 @@ final class ChatGPTOAuthClientTests: XCTestCase {
         XCTAssertEqual(result.clientID, "oaiapp_pet")
     }
 
-    func testSignOutDeletesOnlyActiveAppCredentialAndStartsNoRequest() async throws {
+    func testSignOutRevokesBeforeDeletingOnlyActiveAppTokens() async throws {
         let fixture = OAuthFixture()
         defer { fixture.cleanup() }
         let current = fixture.oldCredential
@@ -54,6 +54,80 @@ final class ChatGPTOAuthClientTests: XCTestCase {
         XCTAssertFalse(fixture.authorizeWasChecked)
         XCTAssertFalse(fixture.exchangeWasChecked)
         XCTAssertEqual(fixture.refreshRequestCount, 0)
+        XCTAssertEqual(fixture.revocationRequests, 1)
+    }
+
+    func testSignOutRetainsRegistrationForRestartWithoutTokenHints() async throws {
+        let fixture = OAuthFixture()
+        defer { fixture.cleanup() }
+        let current = fixture.oldCredential
+        try fixture.store.save(current, accountID: current.accountID)
+        try fixture.store.select(accountID: current.accountID)
+        try await fixture.client.signOut()
+        fixture.expectedClientID = "oaiapp_pet"
+        let restored = try await fixture.makeClient().signIn()
+        XCTAssertEqual(restored.subject, current.subject)
+        XCTAssertEqual(restored.clientID, current.clientID)
+    }
+
+    func testFailedRevocationWarnsButClearsLocalTokens() async throws {
+        for statuses in [[503, 503], [400], [0, 0]] {
+            let fixture = OAuthFixture()
+            defer { fixture.cleanup() }
+            fixture.revocationStatuses = statuses
+            let current = fixture.oldCredential
+            try fixture.store.save(current, accountID: current.accountID)
+            try fixture.store.select(accountID: current.accountID)
+            do { try await fixture.client.signOut(); XCTFail("Expected unconfirmed revocation warning") }
+            catch {
+                XCTAssertTrue(error.localizedDescription.contains("remote revocation"))
+                XCTAssertFalse(error.localizedDescription.contains("synthetic-old-refresh"))
+            }
+            XCTAssertEqual(fixture.revocationRequests, statuses.count)
+            XCTAssertNil(try fixture.store.activeAccountID())
+            XCTAssertNil(try fixture.store.load(accountID: current.accountID))
+        }
+    }
+
+    func testTransientRevocationFailureRetriesThenSignsOutWithoutWarning() async throws {
+        let fixture = OAuthFixture()
+        defer { fixture.cleanup() }
+        fixture.revocationStatuses = [503, 200]
+        let current = fixture.oldCredential
+        try fixture.store.save(current, accountID: current.accountID)
+        try fixture.store.select(accountID: current.accountID)
+        try await fixture.client.signOut()
+        XCTAssertEqual(fixture.revocationRequests, 2)
+        XCTAssertNil(try fixture.store.load(accountID: current.accountID))
+    }
+
+    func testRevocationDiscoveryCannotSendTokenToUnexpectedEndpoint() async throws {
+        for endpoint in ["https://other.example/revoke", "http://auth.openai.com/api/accounts/oauth/revoke",
+                         "https://auth.openai.com/api/accounts/oauth/token",
+                         "https://auth.openai.com/api/accounts/oauth/revoke?redirect=elsewhere"] {
+            let fixture = OAuthFixture()
+            defer { fixture.cleanup() }
+            fixture.revocationEndpoint = endpoint
+            let current = fixture.oldCredential
+            try fixture.store.save(current, accountID: current.accountID)
+            try fixture.store.select(accountID: current.accountID)
+            do { try await fixture.client.signOut(); XCTFail("Expected revocation warning") } catch {}
+            XCTAssertEqual(fixture.revocationRequests, 0)
+            XCTAssertNil(try fixture.store.load(accountID: current.accountID))
+        }
+    }
+
+    func testSignedOutRegistrationStillRequiresOriginalSubject() async throws {
+        let fixture = OAuthFixture(rejection: .subject)
+        defer { fixture.cleanup() }
+        let current = fixture.oldCredential
+        try fixture.store.save(current, accountID: current.accountID)
+        try fixture.store.select(accountID: current.accountID)
+        try await fixture.client.signOut()
+        fixture.expectedClientID = "oaiapp_pet"
+        do { _ = try await fixture.makeClient().signIn(); XCTFail("Expected account mismatch rejection") } catch {}
+        XCTAssertNil(try fixture.store.activeAccountID())
+        XCTAssertNil(try fixture.store.load(accountID: "oaiapp_pet:person-two"))
     }
 
     func testSignOutAndShutdownCannotRestorePendingSignIn() async throws {
@@ -280,6 +354,9 @@ private final class OAuthFixture: @unchecked Sendable {
     var exchangeWasChecked = false
     var failExchange = false
     var expectedClientID: String?
+    var revocationRequests = 0
+    var revocationStatuses = [200]
+    var revocationEndpoint = "https://auth.openai.com/api/accounts/oauth/revoke"
     lazy var oldCredential = ChatGPTCredential(subject: "person-one", clientID: "oaiapp_pet", hostID: try! store.hostID(),
         email: "first@example.test", idToken: "synthetic-old-id", accessToken: "synthetic-old-access",
         refreshToken: "synthetic-old-refresh", scopes: ["chatgpt.tokens.use.direct"], expiresAt: .distantPast)
@@ -299,6 +376,7 @@ private final class OAuthFixture: @unchecked Sendable {
             let expected = expectedClientID ?? (firstRegistration ? "dynamic_agent_client" : "oaiapp_pet")
             XCTAssertEqual(value("client_id"), expected)
             XCTAssertEqual(value("agent_name_hint"), expected == "dynamic_agent_client" ? "Pet Chat" : nil)
+            if active == nil { XCTAssertNil(value("id_token_hint")); XCTAssertNil(value("login_hint")) }
             XCTAssertEqual(value("ext_agent_host_id"), try store.hostID())
             XCTAssertEqual(value("resource"), "https://api.openai.com/v1")
             XCTAssertEqual(value("scope"), "openid profile email offline_access resource.invoke chatgpt.tokens.use.direct")
@@ -332,6 +410,24 @@ private final class OAuthFixture: @unchecked Sendable {
     private func respond(to request: URLRequest) throws -> (Int, Data) {
         XCTAssertEqual(request.url?.scheme, "https")
         XCTAssertEqual(request.url?.host, "auth.openai.com")
+        if request.url?.path == "/.well-known/openid-configuration" {
+            XCTAssertEqual(request.httpMethod, "GET")
+            return (200, try JSONSerialization.data(withJSONObject: ["issuer": "https://auth.openai.com", "revocation_endpoint": revocationEndpoint]))
+        }
+        if request.url?.path == "/api/accounts/oauth/revoke" {
+            XCTAssertEqual(request.httpMethod, "POST")
+            XCTAssertEqual(request.value(forHTTPHeaderField: "Content-Type"), "application/x-www-form-urlencoded")
+            XCTAssertNil(request.value(forHTTPHeaderField: "Authorization"))
+            let form = URLComponents(string: "?" + String(data: request.testBody, encoding: .utf8)!)!.queryItems!
+            XCTAssertEqual(form.first { $0.name == "client_id" }?.value, "oaiapp_pet")
+            XCTAssertTrue(form.first { $0.name == "token" }?.value == "synthetic-old-refresh")
+            XCTAssertEqual(form.first { $0.name == "token_type_hint" }?.value, "refresh_token")
+            XCTAssertNotNil(try store.load(accountID: oldCredential.accountID))
+            let status = revocationStatuses[min(revocationRequests, revocationStatuses.count - 1)]
+            revocationRequests += 1
+            if status == 0 { throw URLError(.notConnectedToInternet) }
+            return (status, Data())
+        }
         if request.url?.path == "/.well-known/jwks.json" {
             if rejection == .jwksRedirect { return (302, Data()) }
             let jwk: [String: Any]

@@ -58,7 +58,8 @@ struct SettingsView: View {
                 Text("Use Chat → Change model to choose a provider and model for a new chat.")
                     .font(.caption)
                 Button("Sign out of ChatGPT") { Task { await panelController.model.signOutChatGPT() } }
-                    .accessibilityHint("Removes this app’s active ChatGPT credential. Keeps local chats, drafts, and Ollama settings.")
+                    .disabled(panelController.model.isSigningOutChatGPT)
+                    .accessibilityHint("Ends this app’s ChatGPT session and removes its local tokens. Keeps its registration, local chats, drafts, and Ollama settings.")
                 if let message = panelController.model.errorMessage { Text(message).foregroundStyle(.primary) }
                 Divider()
                 Text("Images are sent only when you press Send. Capture area asks for Screen Recording permission; Paste image does not need it.")

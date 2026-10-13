@@ -31,6 +31,7 @@ final class AppModel {
     private var modelLoadTask: Task<[ProviderModel], Error>?
     private var submissionTask: Task<Void, Error>?
     private var isConnectingChatGPT = false
+    private(set) var isSigningOutChatGPT = false
 
     var thread: ChatThread? { coordinator.threads.first { $0.id == currentThreadID } }
     var excludedMessageIDs: Set<UUID> {
@@ -69,7 +70,7 @@ final class AppModel {
     }
 
     func loadModels(for providerID: ProviderID) async {
-        guard !isShuttingDown else { return }
+        guard !isShuttingDown, providerID != .chatGPT || !isSigningOutChatGPT else { return }
         let loadID = UUID()
         modelLoadTask?.cancel()
         modelLoadID = loadID
@@ -91,7 +92,7 @@ final class AppModel {
     }
 
     func connectChatGPT() async {
-        guard !isShuttingDown, !isConnectingChatGPT else { return }
+        guard !isShuttingDown, !isConnectingChatGPT, !isSigningOutChatGPT else { return }
         isConnectingChatGPT = true
         defer { isConnectingChatGPT = false }
         let connectID = UUID()
@@ -193,6 +194,7 @@ final class AppModel {
 
     func submit() async {
         guard !isShuttingDown, let id = currentThreadID, !isLoading else { return }
+        guard selectedProviderID != .chatGPT || !isSigningOutChatGPT else { return }
         let text = draft
         let images = attachmentIDs
         let submissionID = UUID()
@@ -248,9 +250,13 @@ final class AppModel {
     }
 
     func signOutChatGPT() async {
+        guard !isSigningOutChatGPT else { return }
+        isSigningOutChatGPT = true
+        defer { isSigningOutChatGPT = false }
+        errorMessage = nil
+        canRetrySubmission = false
         if modelLoadProviderID == .chatGPT { cancelModelLoad() }
         if selectedProviderID == .chatGPT { activeSubmissionID = nil }
-        do { try await signOut() } catch { report(error) }
         do { try await coordinator.stopAll(providerID: .chatGPT) } catch { report(error) }
         if selectedProviderID == .chatGPT {
             submissionTask?.cancel()
@@ -259,6 +265,7 @@ final class AppModel {
             activeSubmissionID = nil
             isLoading = false
         }
+        do { try await signOut() } catch { report(error) }
     }
 
     func shutdown() async {

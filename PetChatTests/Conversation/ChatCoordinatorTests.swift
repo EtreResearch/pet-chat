@@ -470,6 +470,47 @@ final class ChatCoordinatorTests: XCTestCase {
         XCTAssertEqual(fixture.otherProvider.modelDiscoveryCount, 0)
     }
 
+    func testSignOutStopsGenerationBeforeRevocationAndBlocksNewChatGPTRequests() async throws {
+        let fixture = try Fixture()
+        fixture.otherProvider.holdOpen = true
+        let streamStarted = expectation(description: "generation started")
+        fixture.otherProvider.onStream = { streamStarted.fulfill() }
+        let gate = AuthGate()
+        let revocationStarted = expectation(description: "revocation started")
+        gate.onStart = { revocationStarted.fulfill() }
+        var signIns = 0
+        var signOuts = 0
+        let model = AppModel(coordinator: fixture.coordinator, defaults: fixture.defaults, signIn: {
+            signIns += 1
+        }, signOut: {
+            signOuts += 1
+            XCTAssertTrue(fixture.otherProvider.cancelled)
+            await gate.wait()
+            throw ChatGPTError.revocationUnconfirmed
+        })
+        try model.select(providerID: .chatGPT, modelID: "gpt")
+        model.draft = "Keep question"
+        let submission = Task { await model.submit() }
+        await fulfillment(of: [streamStarted], timeout: 2)
+        let signOut = Task { await model.signOutChatGPT() }
+        await fulfillment(of: [revocationStarted], timeout: 2)
+        XCTAssertTrue(model.isSigningOutChatGPT)
+        await model.submit()
+        await model.connectChatGPT()
+        await model.loadModels(for: .chatGPT)
+        await model.signOutChatGPT()
+        XCTAssertEqual(fixture.otherProvider.requests.count, 1)
+        XCTAssertEqual(signIns, 0)
+        XCTAssertEqual(signOuts, 1)
+        gate.resume()
+        await signOut.value
+        await submission.value
+        XCTAssertFalse(model.isSigningOutChatGPT)
+        XCTAssertEqual(model.draft, "Keep question")
+        XCTAssertEqual(model.thread?.messages.last?.status, .stopped)
+        XCTAssertTrue(model.errorMessage?.contains("remote revocation") == true)
+    }
+
     func testOverlappingConnectionsKeepFirstAttemptAndLoadItsModels() async throws {
         let fixture = try Fixture()
         let gate = AuthGate()

@@ -18,6 +18,7 @@ actor ChatGPTOAuthClient {
     private let callbackSession: OAuthCallbackSession
     private let noRedirects = NoRedirects()
     private var signInInProgress = false
+    private var signOutInProgress = false
     private var signInTask: Task<ChatGPTCredential, Error>?
     private var authorizationVersion = UUID()
     private var isShuttingDown = false
@@ -37,7 +38,7 @@ actor ChatGPTOAuthClient {
     }
 
     private func beginSignIn(existing: ChatGPTCredential?) async throws -> ChatGPTCredential {
-        guard !isShuttingDown, !signInInProgress else { throw ChatGPTError.signInFailed }
+        guard !isShuttingDown, !signInInProgress, !signOutInProgress else { throw ChatGPTError.signInFailed }
         signInInProgress = true
         let version = authorizationVersion
         let task = Task { try await authorize(existing: existing, version: version) }
@@ -46,10 +47,17 @@ actor ChatGPTOAuthClient {
         return try await withTaskCancellationHandler { try await task.value } onCancel: { task.cancel() }
     }
 
-    func signOut() throws {
+    func signOut() async throws {
+        guard !signOutInProgress else { return }
+        signOutInProgress = true
+        defer { signOutInProgress = false }
         cancelAuthentication()
-        try store.savePendingClientID(nil)
-        if let accountID = try store.activeAccountID() { try store.delete(accountID: accountID) }
+        guard let accountID = try store.activeAccountID(), let current = try store.load(accountID: accountID) else { return }
+        try store.retainRegistration(current)
+        var confirmed = false
+        do { try await revoke(current); confirmed = true } catch {}
+        try store.delete(accountID: accountID)
+        if !confirmed { throw ChatGPTError.revocationUnconfirmed }
     }
 
     func shutdown() {
@@ -70,7 +78,9 @@ actor ChatGPTOAuthClient {
               redirectURI.port != nil, redirectURI.user == nil, redirectURI.password == nil,
               redirectURI.query == nil, redirectURI.fragment == nil else { throw ChatGPTError.signInFailed }
         let hostID = try store.hostID()
-        let registeredClientID = try existing?.clientID ?? store.pendingClientID()
+        let registration = try existing == nil ? store.signedOutRegistration() : nil
+        guard registration == nil || registration?.hostID == hostID else { throw ChatGPTError.invalidIdentity }
+        let registeredClientID = try existing?.clientID ?? registration?.clientID ?? store.pendingClientID()
         let state = try Self.randomURLString()
         let nonce = try Self.randomURLString()
         let verifier = try Self.randomURLString(byteCount: 64)
@@ -128,7 +138,8 @@ actor ChatGPTOAuthClient {
             "code_verifier": verifier, "redirect_uri": redirectURI.absoluteString, "resource": Self.resource
         ])
         let identity = try await verify(tokens.idToken, clientID: clientID, nonce: nonce)
-        guard existing == nil || (identity.subject == existing?.subject && existing?.clientID == clientID) else {
+        let expectedSubject = existing?.subject ?? registration?.subject
+        guard expectedSubject == nil || identity.subject == expectedSubject else {
             throw ChatGPTError.invalidIdentity
         }
         let credential = try makeCredential(tokens: tokens, identity: identity, clientID: clientID, hostID: hostID)
@@ -141,7 +152,7 @@ actor ChatGPTOAuthClient {
     }
 
     func credential() async throws -> ChatGPTCredential {
-        guard !isShuttingDown else { throw CancellationError() }
+        guard !isShuttingDown, !signOutInProgress else { throw CancellationError() }
         guard let accountID = try store.activeAccountID(), let current = try store.load(accountID: accountID) else {
             throw ChatGPTError.noAccount
         }
@@ -178,15 +189,45 @@ actor ChatGPTOAuthClient {
     }
 
     private func exchange(_ fields: [String: String]) async throws -> OAuthTokens {
-        var request = URLRequest(url: URL(string: Self.issuer + "/api/accounts/oauth/token")!)
+        let request = Self.formRequest(url: URL(string: Self.issuer + "/api/accounts/oauth/token")!, fields: fields)
+        let data = try await load(request, limit: 1_000_000)
+        guard let response = try? JSONDecoder().decode(OAuthTokens.self, from: data) else { throw ChatGPTError.signInFailed }
+        return response
+    }
+
+    private static func formRequest(url: URL, fields: [String: String]) -> URLRequest {
+        var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
         var components = URLComponents()
         components.queryItems = fields.sorted { $0.key < $1.key }.map { URLQueryItem(name: $0.key, value: $0.value) }
-        request.httpBody = Data((components.percentEncodedQuery ?? "").utf8)
-        let data = try await load(request, limit: 1_000_000)
-        guard let response = try? JSONDecoder().decode(OAuthTokens.self, from: data) else { throw ChatGPTError.signInFailed }
-        return response
+        request.httpBody = Data((components.percentEncodedQuery ?? "").replacingOccurrences(of: "+", with: "%2B").utf8)
+        return request
+    }
+
+    private func revoke(_ credential: ChatGPTCredential) async throws {
+        for attempt in 0..<2 {
+            do {
+                var discovery = URLRequest(url: URL(string: Self.issuer + "/.well-known/openid-configuration")!)
+                discovery.timeoutInterval = 5
+                let data = try await load(discovery, limit: 1_000_000)
+                let configuration = try JSONDecoder().decode(OIDCConfiguration.self, from: data)
+                guard configuration.issuer == Self.issuer,
+                      configuration.revocationEndpoint.path == "/api/accounts/oauth/revoke" else { throw ChatGPTError.invalidIdentity }
+                var request = Self.formRequest(url: configuration.revocationEndpoint, fields: [
+                    "token": credential.refreshToken, "token_type_hint": "refresh_token", "client_id": credential.clientID
+                ])
+                request.timeoutInterval = 5
+                guard try await load(request, limit: 1_000_000).isEmpty else { throw ChatGPTError.invalidResponse }
+                return
+            } catch {
+                let retryable: Bool
+                if case ChatGPTError.requestFailed(let code) = error { retryable = (500..<600).contains(code) }
+                else { retryable = error is URLError && !Task.isCancelled }
+                guard attempt == 0, retryable else { throw error }
+                try await Task.sleep(for: .milliseconds(300))
+            }
+        }
     }
 
     private func verify(_ token: String, clientID: String, nonce: String?) async throws -> Identity {
@@ -235,12 +276,15 @@ actor ChatGPTOAuthClient {
 
     private func load(_ request: URLRequest, limit: Int) async throws -> Data {
         guard request.url?.scheme == "https", request.url?.host == "auth.openai.com", request.url?.port == nil,
-              ["/api/accounts/oauth/token", "/.well-known/jwks.json"].contains(request.url?.path ?? "") else {
+              request.url?.user == nil, request.url?.password == nil, request.url?.query == nil, request.url?.fragment == nil,
+              ["/api/accounts/oauth/token", "/.well-known/jwks.json", "/.well-known/openid-configuration",
+               "/api/accounts/oauth/revoke"].contains(request.url?.path ?? "") else {
             throw ChatGPTError.signInFailed
         }
         let (data, response) = try await session.data(for: request, delegate: noRedirects)
         guard let response = response as? HTTPURLResponse, response.url == request.url,
-              response.statusCode == 200, data.count <= limit else { throw ChatGPTError.signInFailed }
+              data.count <= limit else { throw ChatGPTError.signInFailed }
+        guard response.statusCode == 200 else { throw ChatGPTError.requestFailed(response.statusCode) }
         return data
     }
 
@@ -267,6 +311,12 @@ actor ChatGPTOAuthClient {
             [kSecAttrKeyType: kSecAttrKeyTypeRSA, kSecAttrKeyClass: kSecAttrKeyClassPublic,
              kSecAttrKeySizeInBits: modulus.count * 8] as CFDictionary, nil)
     }
+}
+
+private struct OIDCConfiguration: Decodable {
+    let issuer: String
+    let revocationEndpoint: URL
+    enum CodingKeys: String, CodingKey { case issuer, revocationEndpoint = "revocation_endpoint" }
 }
 
 private struct OAuthTokens: Decodable {
