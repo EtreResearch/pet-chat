@@ -23,7 +23,7 @@ final class ChatAccessibilityTests: XCTestCase {
             ChatPanelView(model: model, onClose: {}, onChangeModel: {})
             PetCharacterView()
         })
-        hosting.frame = CGRect(x: 0, y: 0, width: 340, height: 484)
+        hosting.frame = CGRect(x: 0, y: 0, width: 440, height: 594)
         let window = NSWindow(contentRect: hosting.frame, styleMask: .titled, backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false
         window.contentView = hosting
@@ -80,7 +80,7 @@ final class ChatAccessibilityTests: XCTestCase {
         func measure(_ size: Double) async throws -> (font: CGFloat, height: CGFloat) {
             model.textSize = size
             let host = NSHostingView(rootView: ChatPanelView(model: model, onClose: {}, onChangeModel: {}))
-            host.frame = CGRect(x: 0, y: 0, width: 340, height: 420)
+            host.frame = CGRect(x: 0, y: 0, width: 440, height: 530)
             let window = show(host)
             defer { window.contentView = nil; window.close() }
             try await Task.sleep(for: .milliseconds(100))

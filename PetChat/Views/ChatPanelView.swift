@@ -75,7 +75,7 @@ struct ChatPanelView: View {
             ComposerView(model: model)
         }
         .font(.system(size: model.textSize))
-        .frame(width: 340, height: 420)
+        .frame(width: 440, height: 530)
         .task(id: model.thread?.id) { await model.loadModels(for: model.selectedProviderID) }
     }
 }

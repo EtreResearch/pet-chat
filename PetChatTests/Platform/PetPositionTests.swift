@@ -27,7 +27,7 @@ final class PetPositionTests: XCTestCase {
         for point in [CGPoint(x: -1000, y: 40), CGPoint(x: -64, y: 40),
                       CGPoint(x: -1000, y: 676), CGPoint(x: -64, y: 676)] {
             let chat = PetPosition.chatFrame(near: point, visibleFrame: frame)
-            XCTAssertEqual(chat.size, CGSize(width: 340, height: 420))
+            XCTAssertEqual(chat.size, CGSize(width: 440, height: 530))
             XCTAssertTrue(frame.contains(chat))
         }
     }
