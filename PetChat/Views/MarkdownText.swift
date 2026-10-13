@@ -24,8 +24,8 @@ enum MarkdownBlock: Equatable {
 
         for line in text.replacingOccurrences(of: "\r\n", with: "\n").components(separatedBy: "\n") {
             let trimmed = line.trimmingCharacters(in: .whitespaces)
-            if code != nil {
-                if trimmed.hasPrefix("```") { blocks.append(.code(code!.joined(separator: "\n"))); code = nil } else { code!.append(line) }
+            if let open = code {
+                if trimmed.hasPrefix("```") { blocks.append(.code(open.joined(separator: "\n"))); code = nil } else { code = open + [line] }
             } else if trimmed.hasPrefix("```") {
                 flush(); code = []
             } else if trimmed.isEmpty {
@@ -69,6 +69,8 @@ enum MarkdownBlock: Equatable {
 /// Renders Pet reply markdown. Body text uses the caller's environment font.
 struct MarkdownText: View {
     let text: String
+    /// Body size of the surrounding text; levels 1-2 headings are drawn a bit larger than this.
+    var baseSize: CGFloat = 13
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -84,14 +86,14 @@ struct MarkdownText: View {
     private func view(for block: MarkdownBlock) -> some View {
         switch block {
         case let .heading(level, text):
-            Text(inline(text)).font(level <= 2 ? .title3.bold() : .body.bold())
+            Text(inline(text)).font(level <= 2 ? .system(size: baseSize + 3) : nil).bold()
         case let .bullet(text):
             item("•", text)
         case let .numbered(n, text):
             item("\(n).", text)
         case let .code(code):
             ScrollView(.horizontal) {
-                Text(code).font(.system(.body, design: .monospaced)).padding(8)
+                Text(code).monospaced().padding(8)
             }
             .background(Palette.secondaryFill, in: RoundedRectangle(cornerRadius: 6))
         case let .quote(text):
@@ -105,7 +107,7 @@ struct MarkdownText: View {
 
     private func item(_ marker: String, _ text: String) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: 6) {
-            Text(marker)
+            Text(marker).frame(minWidth: 22, alignment: .trailing)
             Text(inline(text))
         }
     }
