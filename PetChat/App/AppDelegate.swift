@@ -21,7 +21,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 }
                 let fixture = try UITestFixture(root: root)
                 startDesktop(model: fixture.model, defaults: fixture.defaults, fullScreenProvider: { _ in false })
-                fixture.model.captureRegion = { UITestFixture.image() }
+                fixture.model.captureRegion = {
+                    if ProcessInfo.processInfo.environment["PET_CHAT_UI_CAPTURE_FAILURE"] == "1" {
+                        throw RegionCaptureController.Error.permissionDenied
+                    }
+                    return UITestFixture.image()
+                }
                 if ProcessInfo.processInfo.environment["PET_CHAT_UI_OPEN_CHAT"] == "1" {
                     panelController?.showChat()
                 }
@@ -43,6 +48,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             alert.messageText = "Pet Chat could not open local history"
             alert.informativeText = error.localizedDescription
             alert.runModal()
+            NSApp.terminate(nil)
         }
     }
 

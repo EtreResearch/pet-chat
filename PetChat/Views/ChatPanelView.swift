@@ -58,7 +58,9 @@ struct ChatPanelView: View {
                 HStack {
                     Text(error).font(.caption).foregroundStyle(.primary)
                     Spacer()
-                    Button("Retry") { Task { await model.submit() } }
+                    if model.canRetrySubmission {
+                        Button("Retry") { Task { await model.submit() } }
+                    }
                     if model.selectedProviderID == .chatGPT {
                         Button("Reconnect") { Task { await model.connectChatGPT() } }
                     }

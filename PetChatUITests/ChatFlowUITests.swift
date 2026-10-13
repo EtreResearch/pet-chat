@@ -128,6 +128,22 @@ final class ChatFlowUITests: IsolatedUITestCase {
         XCTAssertTrue(app.buttons["Tell me more"].isEnabled)
     }
 
+    func testCaptureFailureDoesNotOfferSubmissionRetry() {
+        app.terminate()
+        app.launchEnvironment["PET_CHAT_UI_CAPTURE_FAILURE"] = "1"
+        app.launch()
+        openChat()
+        chooseModel()
+        app.textViews["Message"].click()
+        app.textViews["Message"].typeText("Keep this question")
+        app.buttons["Capture area"].click()
+        let error = app.staticTexts.matching(NSPredicate(format: "value CONTAINS %@ OR label CONTAINS %@", "Allow Pet Chat", "Allow Pet Chat")).firstMatch
+        XCTAssertTrue(error.waitForExistence(timeout: 3))
+        XCTAssertFalse(app.buttons["Retry"].exists)
+        XCTAssertFalse(text("Answer").exists)
+        XCTAssertEqual(app.textViews["Message"].value as? String, "Keep this question")
+    }
+
     func testCapturePreviewRemoveExplicitSendRestartAndDelete() throws {
         openChat()
         chooseModel()

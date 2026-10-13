@@ -24,11 +24,13 @@ final class AppModel {
     private var draftContextID = UUID()
     private var activeSubmissionID: UUID?
     private(set) var errorMessage: String?
+    private(set) var canRetrySubmission = false
     private(set) var models: [ProviderModel] = []
     private var modelLoadID: UUID?
     private var modelLoadProviderID: ProviderID?
     private var modelLoadTask: Task<[ProviderModel], Error>?
     private var submissionTask: Task<Void, Error>?
+    private var isConnectingChatGPT = false
 
     var thread: ChatThread? { coordinator.threads.first { $0.id == currentThreadID } }
     var excludedMessageIDs: Set<UUID> {
@@ -53,6 +55,13 @@ final class AppModel {
             currentThreadID = last.id
             selectedProviderID = last.providerID
             selectedModelID = last.modelID
+            if last.messages.last?.role == .pet, last.messages.last?.status == .failed,
+               let question = last.messages.dropLast().last, question.role == .user {
+                draft = question.text
+                attachmentIDs = question.attachmentIDs
+                errorMessage = ChatCoordinator.Error.incompleteResponse.localizedDescription
+                canRetrySubmission = true
+            }
         } else {
             selectedProviderID = ProviderID(rawValue: defaults.string(forKey: "PetChat.selectedProviderID") ?? "") ?? .ollama
             selectedModelID = defaults.string(forKey: "PetChat.selectedModelID") ?? ""
@@ -75,14 +84,16 @@ final class AppModel {
             let available = try await withTaskCancellationHandler { try await task.value } onCancel: { task.cancel() }
             guard modelLoadID == loadID else { return }
             models = available
-            errorMessage = nil
+            if !canRetrySubmission { errorMessage = nil }
         } catch {
-            if modelLoadID == loadID { errorMessage = error.localizedDescription }
+            if modelLoadID == loadID { report(error) }
         }
     }
 
     func connectChatGPT() async {
-        guard !isShuttingDown else { return }
+        guard !isShuttingDown, !isConnectingChatGPT else { return }
+        isConnectingChatGPT = true
+        defer { isConnectingChatGPT = false }
         let connectID = UUID()
         modelLoadTask?.cancel()
         modelLoadID = connectID
@@ -93,7 +104,7 @@ final class AppModel {
             guard modelLoadID == connectID else { return }
             await loadModels(for: .chatGPT)
         } catch {
-            if modelLoadID == connectID { errorMessage = error.localizedDescription }
+            if modelLoadID == connectID { report(error) }
         }
     }
 
@@ -105,6 +116,12 @@ final class AppModel {
     func select(providerID: ProviderID, modelID: String) throws {
         guard !isShuttingDown, !isLoading else { throw ChatCoordinator.Error.busy }
         let new = try coordinator.newThread(providerID: providerID, modelID: modelID)
+        do {
+            for id in attachmentIDs { try removeAttachment(id) }
+        } catch {
+            try coordinator.deleteThread(new.id)
+            throw error
+        }
         currentThreadID = new.id
         selectedProviderID = providerID
         selectedModelID = modelID
@@ -129,6 +146,7 @@ final class AppModel {
         draft = ""
         attachmentIDs = []
         errorMessage = nil
+        canRetrySubmission = false
     }
 
     func attachImage(_ bytes: Data) throws {
@@ -181,6 +199,7 @@ final class AppModel {
         activeSubmissionID = submissionID
         isLoading = true
         errorMessage = nil
+        canRetrySubmission = false
         let task = Task { try await coordinator.send(text: text, attachmentIDs: images, threadID: id) }
         submissionTask = task
         defer {
@@ -198,7 +217,10 @@ final class AppModel {
                 attachmentIDs.removeAll { images.contains($0) }
             }
         } catch {
-            if activeSubmissionID == submissionID { errorMessage = error.localizedDescription }
+            if activeSubmissionID == submissionID {
+                errorMessage = error.localizedDescription
+                canRetrySubmission = true
+            }
         }
     }
 
@@ -214,7 +236,7 @@ final class AppModel {
         do { try await coordinator.stop(threadID: id) }
         catch {
             if activeSubmissionID == submissionID || activeSubmissionID == nil {
-                errorMessage = error.localizedDescription
+                report(error)
             }
         }
         if activeSubmissionID == submissionID {
@@ -259,5 +281,8 @@ final class AppModel {
         modelLoadProviderID = nil
     }
 
-    func report(_ error: Error) { errorMessage = error.localizedDescription }
+    func report(_ error: Error) {
+        errorMessage = error.localizedDescription
+        canRetrySubmission = false
+    }
 }
