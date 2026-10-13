@@ -724,6 +724,31 @@ final class ChatCoordinatorTests: XCTestCase {
         XCTAssertEqual(fixture.provider.requests.last?.imageData, [image: testPNG(1)])
     }
 
+    func testSuggestionSendsItsTextThroughSubmit() async throws {
+        let fixture = try Fixture()
+        fixture.provider.events = [.textDelta("I can help"), .completed]
+        let model = AppModel(coordinator: fixture.coordinator, auth: fixture.auth, defaults: fixture.defaults)
+        try model.select(providerID: .ollama, modelID: "text")
+
+        await model.sendSuggestion("What can you help with?")
+
+        XCTAssertEqual(model.thread?.messages.map(\.text), ["What can you help with?", "I can help"])
+        XCTAssertTrue(fixture.provider.requests.last?.messages.last?.text.contains("What can you help with?") == true)
+        XCTAssertEqual(model.draft, "")
+    }
+
+    func testSuggestionKeepsPendingDraft() async throws {
+        let fixture = try Fixture()
+        let model = AppModel(coordinator: fixture.coordinator, auth: fixture.auth, defaults: fixture.defaults)
+        try model.select(providerID: .ollama, modelID: "text")
+        model.draft = "My own question"
+
+        await model.sendSuggestion("What can you help with?")
+
+        XCTAssertTrue(fixture.provider.requests.isEmpty)
+        XCTAssertEqual(model.draft, "My own question")
+    }
+
     func testTellMeMoreDoesNotSubmitPendingImage() async throws {
         let fixture = try Fixture()
         let model = AppModel(coordinator: fixture.coordinator, auth: fixture.auth, defaults: fixture.defaults)

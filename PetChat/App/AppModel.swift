@@ -268,6 +268,13 @@ final class AppModel {
         await submit()
     }
 
+    /// Suggestion chip: sends `text` through the normal submit path; ignored while the composer holds a draft or image.
+    func sendSuggestion(_ text: String) async {
+        guard !isLoading, draft.isEmpty, attachmentIDs.isEmpty else { return }
+        draft = text
+        await submit()
+    }
+
     func stop() async {
         guard let id = currentThreadID else { return }
         let submissionID = activeSubmissionID
