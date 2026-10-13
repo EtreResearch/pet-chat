@@ -53,7 +53,7 @@ The cat appears in the bottom-right corner, and a cat icon appears in the menu b
 
 ## For developers
 
-Swift 6, SwiftUI/AppKit and SwiftData. The project has no third-party dependencies. Run the tests (144 unit and UI tests, all passing as of 2026-10-13):
+Swift 6, SwiftUI/AppKit and SwiftData. The project has no third-party dependencies. Run the tests (161 unit and UI tests, all passing as of 2026-10-13):
 
 ```sh
 xcodebuild test -project PetChat.xcodeproj -scheme PetChat -destination 'platform=macOS' -parallel-testing-enabled NO CODE_SIGN_IDENTITY=- CODE_SIGNING_ALLOWED=YES

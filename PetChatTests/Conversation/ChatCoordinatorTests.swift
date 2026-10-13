@@ -765,6 +765,45 @@ final class ChatCoordinatorTests: XCTestCase {
         }
     }
 
+    func testNewChatSwitchesEvenWhenAbandonedImageCleanupPartlyFails() throws {
+        var removals = 0
+        let fixture = try Fixture(removeItem: { url in
+            removals += 1
+            if removals > 1 { throw TestFailure.disk }
+            try FileManager.default.removeItem(at: url)
+        })
+        let model = AppModel(coordinator: fixture.coordinator, defaults: fixture.defaults)
+        try model.select(providerID: .ollama, modelID: "text")
+        let oldID = try XCTUnwrap(model.currentThreadID)
+        try model.attachImage(testPNG(1))
+        try model.attachImage(testPNG(2))
+        model.draft = "abandoned"
+
+        try model.newChat()
+
+        XCTAssertNotEqual(model.currentThreadID, oldID)
+        XCTAssertTrue(model.thread?.messages.isEmpty == true)
+        XCTAssertTrue(model.attachmentIDs.isEmpty)
+        XCTAssertEqual(model.draft, "")
+    }
+
+    func testCommittedDeleteWithCleanupFailureLeavesDeletedChat() throws {
+        let fixture = try Fixture(removeItem: { _ in throw TestFailure.disk })
+        let model = AppModel(coordinator: fixture.coordinator, defaults: fixture.defaults)
+        try model.select(providerID: .ollama, modelID: "text")
+        let first = try XCTUnwrap(model.currentThreadID)
+        try model.newChat()
+        let deleted = try XCTUnwrap(model.currentThreadID)
+        try model.attachImage(testPNG())
+
+        XCTAssertThrowsError(try model.deleteCurrentChat())
+
+        XCTAssertEqual(model.currentThreadID, first)
+        XCTAssertTrue(model.attachmentIDs.isEmpty)
+        XCTAssertFalse(fixture.coordinator.threads.contains { $0.id == deleted })
+        XCTAssertNoThrow(try model.newChat())
+    }
+
     func testPostCommitAttachmentCleanupFailureCannotResurrectDeletedChat() async throws {
         let fixture = try Fixture(removeItem: { _ in throw TestFailure.disk })
         let thread = try fixture.coordinator.newThread(providerID: .ollama, modelID: "vision")

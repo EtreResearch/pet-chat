@@ -117,18 +117,15 @@ final class AppModel {
     func select(providerID: ProviderID, modelID: String) throws {
         guard !isShuttingDown, !isLoading else { throw ChatCoordinator.Error.busy }
         let new = try coordinator.newThread(providerID: providerID, modelID: modelID)
-        do {
-            for id in attachmentIDs { try removeAttachment(id) }
-        } catch {
-            try coordinator.deleteThread(new.id)
-            throw error
-        }
+        let (oldThreadID, abandoned) = (currentThreadID, attachmentIDs)
         currentThreadID = new.id
         selectedProviderID = providerID
         selectedModelID = modelID
         defaults.set(providerID.rawValue, forKey: "PetChat.selectedProviderID")
         defaults.set(modelID, forKey: "PetChat.selectedModelID")
         resetDraft()
+        // ponytail: best-effort after the switch commits; a file that fails to delete stays in the old chat's folder until that chat is deleted.
+        if let oldThreadID { for id in abandoned { try? coordinator.removeDraftAttachment(id, threadID: oldThreadID) } }
     }
 
     func newChat() throws { try select(providerID: selectedProviderID, modelID: selectedModelID) }
@@ -136,10 +133,15 @@ final class AppModel {
     func deleteCurrentChat() throws {
         guard !isShuttingDown, !isLoading else { throw ChatCoordinator.Error.busy }
         guard let id = currentThreadID else { return }
+        // Deletion can commit and still throw for leftover file cleanup; follow the committed state either way.
+        defer {
+            if !coordinator.threads.contains(where: { $0.id == id }) {
+                currentThreadID = coordinator.threads.last?.id
+                if let thread { selectedProviderID = thread.providerID; selectedModelID = thread.modelID }
+                resetDraft()
+            }
+        }
         try coordinator.deleteThread(id)
-        currentThreadID = coordinator.threads.last?.id
-        if let thread { selectedProviderID = thread.providerID; selectedModelID = thread.modelID }
-        resetDraft()
     }
 
     private func resetDraft() {
