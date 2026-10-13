@@ -302,7 +302,6 @@ final class PetPanelTests: XCTestCase {
 }
 
 private actor PanelTestProvider: ChatProvider {
-    let providerID: ProviderID = .ollama
     private(set) var catalogCalls = 0
     func availableModels() async throws -> [ProviderModel] { catalogCalls += 1; return [] }
     nonisolated func stream(_ request: GenerationRequest) -> AsyncThrowingStream<GenerationEvent, Error> {

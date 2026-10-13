@@ -11,17 +11,11 @@ struct PromptMessage: Equatable {
     let attachmentIDs: [UUID]
 }
 
+/// The coordinator has already checked the model exists and supports any attached images,
+/// and `imageData` holds exactly the final message's attachments.
 struct GenerationRequest {
     let id: UUID
-    let modelID: String
+    let model: ProviderModel
     let messages: [PromptMessage]
     let imageData: [UUID: Data]
-
-    init(id: UUID, modelID: String, messages: [PromptMessage], imageData: [UUID: Data]) {
-        self.id = id
-        self.modelID = modelID
-        self.messages = messages
-        let currentIDs = Set(messages.last?.role == .user ? messages.last?.attachmentIDs ?? [] : [])
-        self.imageData = imageData.filter { currentIDs.contains($0.key) }
-    }
 }

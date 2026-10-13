@@ -21,7 +21,7 @@ final class ChatAccessibilityTests: XCTestCase {
         model.draft = "What is in this picture?"
         let hosting = NSHostingView(rootView: VStack(spacing: 0) {
             ChatPanelView(model: model, onClose: {}, onChangeModel: {})
-            PetView()
+            PetCharacterView()
         })
         hosting.frame = CGRect(x: 0, y: 0, width: 340, height: 484)
         let window = NSWindow(contentRect: hosting.frame, styleMask: .titled, backing: .buffered, defer: false)
@@ -165,7 +165,6 @@ final class ChatAccessibilityTests: XCTestCase {
 }
 
 private struct AccessibilityProvider: ChatProvider {
-    let providerID: ProviderID = .ollama
     func availableModels() async throws -> [ProviderModel] { [] }
     func stream(_ request: GenerationRequest) -> AsyncThrowingStream<GenerationEvent, Error> {
         AsyncThrowingStream { $0.finish() }

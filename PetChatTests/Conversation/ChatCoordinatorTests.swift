@@ -28,7 +28,7 @@ final class ChatCoordinatorTests: XCTestCase {
         try await fixture.coordinator.send(text: "second question", attachmentIDs: [], threadID: second.id)
 
         let request = try XCTUnwrap(fixture.otherProvider.requests.last)
-        XCTAssertEqual(request.modelID, "gpt")
+        XCTAssertEqual(request.model.id, "gpt")
         XCTAssertEqual(request.messages.count, 1)
         XCTAssertTrue(request.messages[0].text.hasSuffix("second question"))
         XCTAssertTrue(try XCTUnwrap(fixture.store.load().first { $0.id == second.id }).messages.first?.text == "second question")
@@ -145,7 +145,7 @@ final class ChatCoordinatorTests: XCTestCase {
         fixture.provider.events = [.textDelta("Working"), .completed]
         fixture.provider.failure = nil
 
-        await model.retry()
+        await model.submit()
 
         XCTAssertEqual(fixture.provider.requests.last?.messages.count, 1)
         XCTAssertTrue(fixture.provider.requests.last?.messages[0].text.hasSuffix("Question") == true)
@@ -520,7 +520,7 @@ final class ChatCoordinatorTests: XCTestCase {
         XCTAssertFalse(model.isLoading)
         XCTAssertEqual(model.draft, "Retry this")
         fixture.provider.holdModels = false
-        await model.retry()
+        await model.submit()
         fixture.provider.modelsGate?.resume()
         await old.value
 

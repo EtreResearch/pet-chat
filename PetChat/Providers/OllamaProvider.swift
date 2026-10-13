@@ -6,8 +6,6 @@ enum OllamaError: LocalizedError {
     case invalidStream
     case incompleteStream
     case lineTooLong
-    case unsupportedImages
-    case missingImage
 
     var errorDescription: String? {
         switch self {
@@ -16,19 +14,15 @@ enum OllamaError: LocalizedError {
         case .invalidStream: "Ollama returned an invalid chat stream. Try again."
         case .incompleteStream: "Ollama stopped before completing the answer. Try again."
         case .lineTooLong: "Ollama returned an oversized response. Try again."
-        case .unsupportedImages: "This Ollama model does not support images. Select an image-capable model."
-        case .missingImage: "The attached image could not be loaded. Add it again before sending."
         }
     }
 }
 
 final class OllamaProvider: ChatProvider, @unchecked Sendable {
-    let providerID: ProviderID = .ollama
     private let endpoint = URL(string: "http://localhost:11434")!
     private let session: URLSession
     private let noRedirects = NoRedirects()
-    private let lock = NSLock()
-    private var requests: [UUID: Task<Void, Never>] = [:]
+    private let tasks = GenerationTasks()
     private let maxJSONBytes = 4 * 1_024 * 1_024
     private let maxLineBytes = 1_024 * 1_024
 
@@ -39,6 +33,7 @@ final class OllamaProvider: ChatProvider, @unchecked Sendable {
     func availableModels() async throws -> [ProviderModel] {
         let tags: Tags = try await loadJSON(path: "/api/tags", method: "GET", body: nil)
         var models: [ProviderModel] = []
+        // ponytail: one /api/show per installed model on every discovery; cache per model if users install many.
         for tag in tags.models {
             let details = try await modelDetails(tag.name)
             models.append(ProviderModel(
@@ -52,73 +47,41 @@ final class OllamaProvider: ChatProvider, @unchecked Sendable {
     }
 
     func stream(_ request: GenerationRequest) -> AsyncThrowingStream<GenerationEvent, Error> {
-        AsyncThrowingStream { continuation in
-            let task = Task {
-                do {
-                    let currentImages = request.messages.last?.attachmentIDs ?? []
-                    guard currentImages.allSatisfy({ request.imageData[$0] != nil }) else { throw OllamaError.missingImage }
-                    let details = try await modelDetails(request.modelID)
-                    if !currentImages.isEmpty {
-                        guard details.capabilities?.contains("vision") == true else { throw OllamaError.unsupportedImages }
-                    }
-
-                    let messages: [[String: Any]] = request.messages.enumerated().map { index, message in
-                        var item: [String: Any] = [
-                            "role": message.role == .user ? "user" : "assistant",
-                            "content": message.text
-                        ]
-                        if index == request.messages.count - 1 && !currentImages.isEmpty {
-                            item["images"] = currentImages.compactMap { request.imageData[$0]?.base64EncodedString() }
-                        }
-                        return item
-                    }
-                    let body = try JSONSerialization.data(withJSONObject: [
-                        "model": request.modelID,
-                        "messages": messages,
-                        "options": ["num_ctx": details.contextWindowTokens],
-                        "stream": true
-                    ])
-                    var urlRequest = URLRequest(url: endpoint.appending(path: "/api/chat"))
-                    urlRequest.httpMethod = "POST"
-                    urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
-                    urlRequest.httpBody = body
-                    let (bytes, response) = try await session.bytes(for: urlRequest, delegate: noRedirects)
-                    try check(response)
-                    var line = Data()
-                    var sawTerminal = false
-                    for try await byte in bytes {
-                        try Task.checkCancellation()
-                        if byte == 10 {
-                            try process(line: line, modelID: request.modelID, terminal: &sawTerminal, continuation: continuation)
-                            line.removeAll(keepingCapacity: true)
-                        } else {
-                            guard line.count < maxLineBytes else { throw OllamaError.lineTooLong }
-                            line.append(byte)
-                        }
-                    }
-                    if !line.isEmpty {
-                        try process(line: line, modelID: request.modelID, terminal: &sawTerminal, continuation: continuation)
-                    }
-                    try Task.checkCancellation()
-                    guard sawTerminal else { throw OllamaError.incompleteStream }
-                    continuation.yield(.completed)
-                    continuation.finish()
-                } catch {
-                    continuation.finish(throwing: error)
+        tasks.stream(id: request.id) { [self] continuation in
+            let currentImages = request.messages.last?.attachmentIDs ?? []
+            let messages: [[String: Any]] = request.messages.enumerated().map { index, message in
+                var item: [String: Any] = [
+                    "role": message.role == .user ? "user" : "assistant",
+                    "content": message.text
+                ]
+                if index == request.messages.count - 1 && !currentImages.isEmpty {
+                    item["images"] = currentImages.compactMap { request.imageData[$0]?.base64EncodedString() }
                 }
+                return item
             }
-            lock.withLock { requests[request.id] = task }
-            continuation.onTermination = { [weak self] _ in
-                task.cancel()
-                _ = self?.lock.withLock { self?.requests.removeValue(forKey: request.id) }
+            let body = try JSONSerialization.data(withJSONObject: [
+                "model": request.model.id,
+                "messages": messages,
+                "options": ["num_ctx": request.model.contextWindowTokens ?? ModelDetails.defaultContext],
+                "stream": true
+            ])
+            var urlRequest = URLRequest(url: endpoint.appending(path: "/api/chat"))
+            urlRequest.httpMethod = "POST"
+            urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            urlRequest.httpBody = body
+            let (bytes, response) = try await session.bytes(for: urlRequest, delegate: noRedirects)
+            try check(response)
+            var sawTerminal = false
+            _ = try await bytes.forEachLine(maxBytes: maxLineBytes, tooLong: OllamaError.lineTooLong) { line in
+                try process(line: line, modelID: request.model.id, terminal: &sawTerminal, continuation: continuation)
+                return false
             }
+            try Task.checkCancellation()
+            guard sawTerminal else { throw OllamaError.incompleteStream }
         }
     }
 
-    func cancel(_ requestID: UUID) async {
-        let task = lock.withLock { requests[requestID] }
-        task?.cancel()
-    }
+    func cancel(_ requestID: UUID) async { tasks.cancel(requestID) }
 
     private func modelDetails(_ name: String) async throws -> ModelDetails {
         let body = try JSONSerialization.data(withJSONObject: ["model": name])
@@ -154,7 +117,6 @@ final class OllamaProvider: ChatProvider, @unchecked Sendable {
         terminal: inout Bool,
         continuation: AsyncThrowingStream<GenerationEvent, Error>.Continuation
     ) throws {
-        let line = line.last == 13 ? line.dropLast() : line[...]
         guard !line.isEmpty else { return }
         guard !terminal, let event = try? JSONDecoder().decode(ChatChunk.self, from: line),
               event.model == modelID, let done = event.done else {
@@ -176,6 +138,7 @@ private struct Tags: Decodable {
 }
 
 private struct ModelDetails: Decodable {
+    static let defaultContext = 4_096
     let capabilities: [String]?
     let contextWindowTokens: Int
 
@@ -197,16 +160,14 @@ private struct ModelDetails: Decodable {
                 break
             }
         }
-        if let info = try? container.nestedContainer(keyedBy: ModelInfoKey.self, forKey: .modelInfo) {
-            let modelContext = info.allKeys
+        let requested = configuredContext.flatMap { $0 > 0 ? $0 : nil } ?? Self.defaultContext
+        let modelContext = (try? container.nestedContainer(keyedBy: ModelInfoKey.self, forKey: .modelInfo)).flatMap { info in
+            info.allKeys
                 .filter { $0.stringValue.hasSuffix(".context_length") }
                 .compactMap { try? info.decode(Int.self, forKey: $0) }
-                .first
-            let requested = configuredContext.flatMap { $0 > 0 ? $0 : nil } ?? 4_096
-            contextWindowTokens = min(modelContext.flatMap { $0 > 0 ? $0 : nil } ?? requested, requested)
-        } else {
-            contextWindowTokens = configuredContext.flatMap { $0 > 0 ? $0 : nil } ?? 4_096
+                .first { $0 > 0 }
         }
+        contextWindowTokens = min(modelContext ?? requested, requested)
     }
 
     private struct ModelInfoKey: CodingKey {
@@ -225,17 +186,5 @@ private struct ChatChunk: Decodable {
     struct Message: Decodable {
         let role: String?
         let content: String?
-    }
-}
-
-private final class NoRedirects: NSObject, URLSessionTaskDelegate {
-    func urlSession(
-        _ session: URLSession,
-        task: URLSessionTask,
-        willPerformHTTPRedirection response: HTTPURLResponse,
-        newRequest request: URLRequest,
-        completionHandler: @escaping (URLRequest?) -> Void
-    ) {
-        completionHandler(nil)
     }
 }

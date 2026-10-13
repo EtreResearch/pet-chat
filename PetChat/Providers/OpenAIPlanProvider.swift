@@ -1,12 +1,10 @@
 import Foundation
 
 final class OpenAIPlanProvider: ChatProvider, @unchecked Sendable {
-    let providerID: ProviderID = .chatGPT
     private let auth: ChatGPTOAuthClient
     private let session: URLSession
-    private let noRedirects = PlanNoRedirects()
-    private let lock = NSLock()
-    private var requests: [UUID: Task<Void, Never>] = [:]
+    private let noRedirects = NoRedirects()
+    private let tasks = GenerationTasks()
     private let endpoint = URL(string: "https://api.openai.com/v1")!
     private let maxJSONBytes = 1_000_000
     private let maxLineBytes = 1_000_000
@@ -18,12 +16,8 @@ final class OpenAIPlanProvider: ChatProvider, @unchecked Sendable {
 
     func availableModels() async throws -> [ProviderModel] {
         let credential = try await auth.credential()
-        return try await models(accessToken: credential.accessToken)
-    }
-
-    private func models(accessToken: String) async throws -> [ProviderModel] {
         var request = URLRequest(url: endpoint.appending(path: "models"))
-        request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
+        request.setValue("Bearer \(credential.accessToken)", forHTTPHeaderField: "Authorization")
         let (data, response) = try await session.data(for: request, delegate: noRedirects)
         try check(response, expected: request.url!)
         guard data.count <= maxJSONBytes,
@@ -39,80 +33,43 @@ final class OpenAIPlanProvider: ChatProvider, @unchecked Sendable {
     }
 
     func stream(_ request: GenerationRequest) -> AsyncThrowingStream<GenerationEvent, Error> {
-        AsyncThrowingStream { continuation in
-            let task = Task {
-                do {
-                    let credential = try await auth.credential()
-                    let available = try await models(accessToken: credential.accessToken)
-                    guard let model = available.first(where: { $0.id == request.modelID }) else {
-                        throw ChatGPTError.unavailableModel
-                    }
-                    let imageIDs = request.messages.last?.role == .user ? request.messages.last?.attachmentIDs ?? [] : []
-                    guard imageIDs.allSatisfy({ request.imageData[$0] != nil }) else { throw ChatGPTError.missingImage }
-                    guard imageIDs.isEmpty || model.supportsImages else { throw ChatGPTError.unsupportedImages }
-                    let input: [[String: Any]] = try request.messages.enumerated().map { index, message in
-                        let role = message.role == .user ? "user" : "assistant"
-                        guard index == request.messages.count - 1, !imageIDs.isEmpty else {
-                            return ["role": role, "content": message.text]
-                        }
-                        var content: [[String: Any]] = [["type": "input_text", "text": message.text]]
-                        for id in imageIDs {
-                            guard let data = request.imageData[id] else { throw ChatGPTError.missingImage }
-                            guard let mime = Self.mimeType(data) else { throw ChatGPTError.unsupportedImages }
-                            content.append(["type": "input_image", "image_url": "data:\(mime);base64,\(data.base64EncodedString())"])
-                        }
-                        return ["role": role, "content": content]
-                    }
-                    let body = try JSONSerialization.data(withJSONObject: [
-                        "model": request.modelID, "input": input, "store": false, "stream": true
-                    ])
-                    var urlRequest = URLRequest(url: endpoint.appending(path: "responses"))
-                    urlRequest.httpMethod = "POST"
-                    urlRequest.setValue("Bearer \(credential.accessToken)", forHTTPHeaderField: "Authorization")
-                    urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
-                    urlRequest.httpBody = body
-                    let (bytes, response) = try await session.bytes(for: urlRequest, delegate: noRedirects)
-                    try check(response, expected: urlRequest.url!)
-                    var line = Data()
-                    var eventData = Data()
-                    var completed = false
-                    var state = StreamState()
-                    for try await byte in bytes {
-                        try Task.checkCancellation()
-                        if byte == 10 {
-                            if try process(line: line, eventData: &eventData, state: &state, continuation: continuation) {
-                                completed = true
-                                break
-                            }
-                            line.removeAll(keepingCapacity: true)
-                        } else {
-                            guard line.count < maxLineBytes else { throw ChatGPTError.invalidResponse }
-                            line.append(byte)
-                        }
-                    }
-                    if !completed {
-                        if !line.isEmpty, try process(line: line, eventData: &eventData, state: &state, continuation: continuation) { completed = true }
-                        else if !eventData.isEmpty { completed = try dispatch(eventData, state: &state, continuation: continuation) }
-                    }
-                    try Task.checkCancellation()
-                    guard completed else { throw ChatGPTError.incompleteResponse }
-                    continuation.yield(.completed)
-                    continuation.finish()
-                } catch {
-                    continuation.finish(throwing: error)
+        tasks.stream(id: request.id) { [self] continuation in
+            let credential = try await auth.credential()
+            let imageIDs = request.messages.last?.role == .user ? request.messages.last?.attachmentIDs ?? [] : []
+            let input: [[String: Any]] = try request.messages.enumerated().map { index, message in
+                let role = message.role == .user ? "user" : "assistant"
+                guard index == request.messages.count - 1, !imageIDs.isEmpty else {
+                    return ["role": role, "content": message.text]
                 }
+                var content: [[String: Any]] = [["type": "input_text", "text": message.text]]
+                for data in imageIDs.compactMap({ request.imageData[$0] }) {
+                    guard let mime = Self.mimeType(data) else { throw ChatGPTError.unsupportedImages }
+                    content.append(["type": "input_image", "image_url": "data:\(mime);base64,\(data.base64EncodedString())"])
+                }
+                return ["role": role, "content": content]
             }
-            lock.withLock { requests[request.id] = task }
-            continuation.onTermination = { [weak self] _ in
-                task.cancel()
-                _ = self?.lock.withLock { self?.requests.removeValue(forKey: request.id) }
+            let body = try JSONSerialization.data(withJSONObject: [
+                "model": request.model.id, "input": input, "store": false, "stream": true
+            ])
+            var urlRequest = URLRequest(url: endpoint.appending(path: "responses"))
+            urlRequest.httpMethod = "POST"
+            urlRequest.setValue("Bearer \(credential.accessToken)", forHTTPHeaderField: "Authorization")
+            urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            urlRequest.httpBody = body
+            let (bytes, response) = try await session.bytes(for: urlRequest, delegate: noRedirects)
+            try check(response, expected: urlRequest.url!)
+            var eventData = Data()
+            var state = StreamState()
+            var completed = try await bytes.forEachLine(maxBytes: maxLineBytes, tooLong: ChatGPTError.invalidResponse) { line in
+                try process(line: line, eventData: &eventData, state: &state, continuation: continuation)
             }
+            if !completed, !eventData.isEmpty { completed = try dispatch(eventData, state: &state, continuation: continuation) }
+            try Task.checkCancellation()
+            guard completed else { throw ChatGPTError.incompleteResponse }
         }
     }
 
-    func cancel(_ requestID: UUID) async {
-        lock.withLock { requests[requestID] }?.cancel()
-    }
+    func cancel(_ requestID: UUID) async { tasks.cancel(requestID) }
 
     private func check(_ response: URLResponse, expected: URL) throws {
         guard expected.scheme == "https", expected.host == "api.openai.com", expected.port == nil,
@@ -125,20 +82,16 @@ final class OpenAIPlanProvider: ChatProvider, @unchecked Sendable {
 
     private func process(line: Data, eventData: inout Data, state: inout StreamState,
                          continuation: AsyncThrowingStream<GenerationEvent, Error>.Continuation) throws -> Bool {
-        let line = line.last == 13 ? line.dropLast() : line[...]
         if line.isEmpty {
             guard !eventData.isEmpty else { return false }
             defer { eventData.removeAll(keepingCapacity: true) }
             return try dispatch(eventData, state: &state, continuation: continuation)
         }
-        if line.starts(with: Data("data: ".utf8)) {
+        if line.starts(with: Data("data:".utf8)) {
             guard eventData.count + line.count <= maxJSONBytes else { throw ChatGPTError.invalidResponse }
             if !eventData.isEmpty { eventData.append(10) }
-            eventData.append(line.dropFirst(6))
-        } else if line.starts(with: Data("data:".utf8)) {
-            guard eventData.count + line.count <= maxJSONBytes else { throw ChatGPTError.invalidResponse }
-            if !eventData.isEmpty { eventData.append(10) }
-            eventData.append(line.dropFirst(5))
+            let value = line.dropFirst(5)
+            eventData.append(value.first == 32 ? value.dropFirst() : value)
         }
         return false
     }
@@ -287,10 +240,4 @@ private struct StreamEvent: Decodable {
         }
         struct Failure: Decodable { let code: String? }
     }
-}
-
-private final class PlanNoRedirects: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
-    func urlSession(_ session: URLSession, task: URLSessionTask,
-                    willPerformHTTPRedirection response: HTTPURLResponse, newRequest request: URLRequest,
-                    completionHandler: @escaping (URLRequest?) -> Void) { completionHandler(nil) }
 }

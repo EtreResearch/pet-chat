@@ -17,7 +17,7 @@ struct ChatGPTCredential: Codable, Equatable, Sendable {
 enum ChatGPTError: LocalizedError {
     case signInFailed, invalidIdentity, missingPermission, noAccount
     case requestFailed(Int)
-    case invalidResponse, incompleteResponse, usageLimit, unsupportedImages, missingImage, unavailableModel
+    case invalidResponse, incompleteResponse, usageLimit, unsupportedImages
 
     var errorDescription: String? {
         switch self {
@@ -29,9 +29,7 @@ enum ChatGPTError: LocalizedError {
         case .invalidResponse: "ChatGPT returned an invalid response. Try again."
         case .incompleteResponse: "ChatGPT stopped before completing the answer. Try again."
         case .usageLimit: "ChatGPT plan usage limit reached. Wait for the limit to reset, then retry."
-        case .unsupportedImages: "This ChatGPT model does not support images. Select an image-capable model."
-        case .missingImage: "The attached image could not be loaded. Add it again before sending."
-        case .unavailableModel: "This model is not available for the connected ChatGPT account."
+        case .unsupportedImages: "ChatGPT accepts PNG, JPEG, GIF, or WebP images. Attach a supported image."
         }
     }
 }

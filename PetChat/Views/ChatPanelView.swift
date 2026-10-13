@@ -10,7 +10,7 @@ struct ChatPanelView: View {
             HStack {
                 VStack(alignment: .leading) {
                     Text("Pet Chat").font(.headline)
-                    Text("\(model.selectedProviderID == .ollama ? "Ollama" : "ChatGPT") · \(model.selectedModelID)")
+                    Text("\(model.selectedProviderID.displayName) · \(model.selectedModelID)")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -58,7 +58,7 @@ struct ChatPanelView: View {
                 HStack {
                     Text(error).font(.caption).foregroundStyle(.primary)
                     Spacer()
-                    Button("Retry") { Task { await model.retry() } }
+                    Button("Retry") { Task { await model.submit() } }
                     if model.selectedProviderID == .chatGPT {
                         Button("Reconnect") { Task { await model.connectChatGPT() } }
                     }
@@ -66,7 +66,7 @@ struct ChatPanelView: View {
                 .padding(.horizontal, 10)
             }
             Button("Tell me more") { Task { await model.tellMeMore() } }
-                .disabled(model.isLoading || !model.draft.isEmpty || !model.attachmentIDs.isEmpty || model.thread?.messages.last?.role != .pet || model.thread?.messages.last?.status != .complete)
+                .disabled(!model.canTellMeMore)
                 .accessibilityLabel("Tell me more")
                 .padding(.bottom, 4)
             Divider()

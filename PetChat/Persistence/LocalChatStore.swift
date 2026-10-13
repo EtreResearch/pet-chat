@@ -37,15 +37,11 @@ final class LocalChatStore {
     func save(_ thread: ChatThread) throws {
         let context = ModelContext(container)
         context.autosaveEnabled = false
-        do {
-            let id = thread.id
-            let existing = try context.fetch(FetchDescriptor<ChatRecord>(predicate: #Predicate { $0.id == id }))
-            existing.forEach(context.delete)
-            context.insert(try ChatRecord(thread))
-            try saveContext(context)
-        } catch {
-            throw error
-        }
+        let id = thread.id
+        let existing = try context.fetch(FetchDescriptor<ChatRecord>(predicate: #Predicate { $0.id == id }))
+        existing.forEach(context.delete)
+        context.insert(try ChatRecord(thread))
+        try saveContext(context)
     }
 
     func delete(threadID: UUID) throws {

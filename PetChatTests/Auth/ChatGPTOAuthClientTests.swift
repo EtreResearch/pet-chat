@@ -81,20 +81,6 @@ final class ChatGPTOAuthClientTests: XCTestCase {
         XCTAssertTrue(try fixture.store.load(accountID: result.accountID) == result)
     }
 
-    func testAddingSecondAccountKeepsFirstAndSelectsNewIdentity() async throws {
-        let fixture = OAuthFixture(addingAccount: true)
-        defer { fixture.cleanup() }
-        let old = fixture.oldCredential
-        try fixture.store.save(old, accountID: old.accountID)
-        try fixture.store.select(accountID: old.accountID)
-        let added = try await fixture.client.signInNewAccount()
-        XCTAssertEqual(added.clientID, "oaiapp_second")
-        XCTAssertEqual(added.subject, "person-two")
-        XCTAssertTrue(try fixture.store.load(accountID: old.accountID) == old)
-        XCTAssertTrue(try fixture.store.load(accountID: added.accountID) == added)
-        XCTAssertEqual(try fixture.store.activeAccountID(), added.accountID)
-    }
-
     func testOverlappingSignInsCannotReplacePendingCallback() async throws {
         let receiver = HoldingCallbackSession()
         let client = ChatGPTOAuthClient(store: KeychainCredentialStore(service: "com.etre.pet-chat.pending-tests.\(UUID())"),
@@ -269,7 +255,6 @@ private final class OAuthFixture: @unchecked Sendable {
     let key = P256.Signing.PrivateKey()
     let rsaKey: SecKey?
     let rejection: Rejection?
-    let addingAccount: Bool
     let refreshDelay: Bool
     var signInStarted: XCTestExpectation?
     var signInDelay = false
@@ -277,8 +262,8 @@ private final class OAuthFixture: @unchecked Sendable {
     private let refreshLock = NSLock()
     private var refreshRequests = 0
     var refreshRequestCount: Int { refreshLock.withLock { refreshRequests } }
-    var issuedClientID: String { addingAccount ? "oaiapp_second" : "oaiapp_pet" }
-    var issuedSubject: String { addingAccount ? "person-two" : "person-one" }
+    let issuedClientID = "oaiapp_pet"
+    let issuedSubject = "person-one"
     var authorizeWasChecked = false
     var exchangeWasChecked = false
     lazy var oldCredential = ChatGPTCredential(subject: "person-one", clientID: "oaiapp_pet", hostID: try! store.hostID(),
@@ -295,7 +280,7 @@ private final class OAuthFixture: @unchecked Sendable {
             XCTAssertEqual(url.host, "auth.openai.com")
             XCTAssertEqual(url.path, "/api/accounts/authorize")
             let active = try store.activeAccountID()
-            let firstRegistration = addingAccount || active == nil
+            let firstRegistration = active == nil
             XCTAssertEqual(value("client_id"), firstRegistration ? "dynamic_agent_client" : "oaiapp_pet")
             XCTAssertEqual(value("agent_name_hint"), firstRegistration ? "Pet Chat" : nil)
             XCTAssertEqual(value("ext_agent_host_id"), try store.hostID())
@@ -316,9 +301,8 @@ private final class OAuthFixture: @unchecked Sendable {
         })
     }()
 
-    init(rejection: Rejection? = nil, rsa: Bool = false, addingAccount: Bool = false, refreshDelay: Bool = false) {
+    init(rejection: Rejection? = nil, rsa: Bool = false, refreshDelay: Bool = false) {
         self.rejection = rejection
-        self.addingAccount = addingAccount
         self.refreshDelay = refreshDelay
         rsaKey = rsa ? SecKeyCreateRandomKey([kSecAttrKeyType: kSecAttrKeyTypeRSA,
                                               kSecAttrKeySizeInBits: 2048] as CFDictionary, nil) : nil

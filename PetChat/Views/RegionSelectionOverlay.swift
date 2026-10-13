@@ -54,7 +54,7 @@ final class RegionSelectionOverlay: NSView {
                 var panels: [SelectionPanel] = []
                 var finished = false
                 for screen in NSScreen.screens {
-                    guard let id = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? UInt32 else { continue }
+                    guard let id = screen.displayID else { continue }
                     let panel = SelectionPanel(contentRect: screen.frame, styleMask: .borderless, backing: .buffered, defer: false)
                     panel.isReleasedWhenClosed = false
                     panel.level = .screenSaver

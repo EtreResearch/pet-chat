@@ -1,6 +1,10 @@
 import AppKit
 import SwiftUI
 
+extension NSScreen {
+    var displayID: CGDirectDisplayID? { deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? CGDirectDisplayID }
+}
+
 struct PetDisplay: Identifiable {
     let id: CGDirectDisplayID
     let visibleFrame: CGRect
@@ -48,7 +52,7 @@ final class PetPanelController: NSObject {
     private let displayProvider: () -> [PetDisplay]
     private let fullScreenProvider: (CGDirectDisplayID?) -> Bool
     private(set) var selectedDisplayID: CGDirectDisplayID?
-    private var wantsPetVisible = true
+    private(set) var isPetVisible = true
     private var fullScreen = false
     private var summonedInFullScreen = false
     private var chatContentInstalled = false
@@ -60,8 +64,7 @@ final class PetPanelController: NSObject {
 
     static var currentDisplays: [PetDisplay] {
         NSScreen.screens.compactMap { screen in
-            guard let id = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? UInt32 else { return nil }
-            return PetDisplay(id: id, visibleFrame: screen.visibleFrame, name: screen.localizedName)
+            screen.displayID.map { PetDisplay(id: $0, visibleFrame: screen.visibleFrame, name: screen.localizedName) }
         }
     }
     private var positions: [CGDirectDisplayID: CGPoint] {
@@ -125,7 +128,7 @@ final class PetPanelController: NSObject {
         chatPanel.orderOut(nil)
         defer {
             captureInProgress = false
-            if panelRevision == revision, wantsPetVisible {
+            if panelRevision == revision, isPetVisible {
                 presentChat(activate: false, focus: captureMayFocus && NSApp.isActive)
             }
         }
@@ -142,7 +145,7 @@ final class PetPanelController: NSObject {
             }))
             chatContentInstalled = true
         }
-        wantsPetVisible = true
+        isPetVisible = true
         summonedInFullScreen = fullScreen
         petPanel.orderFrontRegardless()
         placeChat()
@@ -167,20 +170,18 @@ final class PetPanelController: NSObject {
 
     func showPetOnly() {
         panelRevision += 1
-        wantsPetVisible = true
+        isPetVisible = true
         chatPanel.orderOut(nil)
         if !fullScreen || summonedInFullScreen { petPanel.orderFrontRegardless() }
     }
 
     func hidePet() {
         panelRevision += 1
-        wantsPetVisible = false
+        isPetVisible = false
         summonedInFullScreen = false
         petPanel.orderOut(nil)
         chatPanel.orderOut(nil)
     }
-
-    var isPetVisible: Bool { wantsPetVisible }
 
     func repositionPet(for displayID: CGDirectDisplayID) {
         guard let position = PetPosition.resolve(displayID: displayID, positions: positions, displays: displays) else {
@@ -213,7 +214,7 @@ final class PetPanelController: NSObject {
         fullScreen = isFullScreen
         summonedInFullScreen = false
         if isFullScreen { petPanel.orderOut(nil); chatPanel.orderOut(nil) }
-        else if wantsPetVisible && !captureInProgress { petPanel.orderFrontRegardless() }
+        else if isPetVisible && !captureInProgress { petPanel.orderFrontRegardless() }
     }
 
     private func placeChat() {

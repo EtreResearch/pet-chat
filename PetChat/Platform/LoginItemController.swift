@@ -9,8 +9,9 @@ final class LoginItemController {
     private let register: () throws -> Void
     private let unregister: () throws -> Void
     private(set) var optedIn: Bool
-    private(set) var isEnabled: Bool
-    private(set) var requiresApproval: Bool
+    private var serviceStatus: SMAppService.Status
+    var isEnabled: Bool { serviceStatus == .enabled }
+    var requiresApproval: Bool { serviceStatus == .requiresApproval }
 
     init(defaults: UserDefaults = .standard, status: @escaping () -> SMAppService.Status = { SMAppService.mainApp.status },
          register: @escaping () throws -> Void = { try SMAppService.mainApp.register() },
@@ -20,20 +21,18 @@ final class LoginItemController {
         self.register = register
         self.unregister = unregister
         optedIn = defaults.bool(forKey: "PetChat.launchAtLogin")
-        isEnabled = status() == .enabled
-        requiresApproval = status() == .requiresApproval
+        serviceStatus = status()
     }
 
     func setEnabled(_ enabled: Bool) throws {
         if enabled { try register() }
-        else if status() == .enabled || status() == .requiresApproval { try unregister() }
+        else if [.enabled, .requiresApproval].contains(status()) { try unregister() }
         optedIn = enabled
         defaults.set(enabled, forKey: "PetChat.launchAtLogin")
         refreshStatus()
     }
 
     func refreshStatus() {
-        isEnabled = status() == .enabled
-        requiresApproval = status() == .requiresApproval
+        serviceStatus = status()
     }
 }

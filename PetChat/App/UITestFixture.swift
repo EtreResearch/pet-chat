@@ -30,8 +30,8 @@ struct UITestFixture {
         let configuration = ModelConfiguration(url: root.appendingPathComponent("history.store"))
         let container = try ModelContainer(for: ChatRecord.self, MessageRecord.self, configurations: configuration)
         let store = try LocalChatStore(container: container, attachments: attachments)
-        let coordinator = try ChatCoordinator(providers: [.ollama: FixtureProvider(providerID: .ollama),
-                                                         .chatGPT: FixtureProvider(providerID: .chatGPT)],
+        let coordinator = try ChatCoordinator(providers: [.ollama: FixtureProvider(),
+                                                         .chatGPT: FixtureProvider()],
                                               store: store, attachments: attachments)
         var status = SMAppService.Status.notRegistered
         let login = LoginItemController(defaults: defaults, status: { status },
@@ -53,10 +53,8 @@ struct UITestFixture {
 }
 
 private final class FixtureProvider: ChatProvider, @unchecked Sendable {
-    let providerID: ProviderID
     private let lock = NSLock()
     private var hasFailed = false
-    init(providerID: ProviderID) { self.providerID = providerID }
 
     func availableModels() async throws -> [ProviderModel] {
         [ProviderModel(id: "fixture-model", displayName: "Fixture model", supportsImages: true, contextWindowTokens: 4096)]

@@ -53,7 +53,7 @@ struct SettingsView: View {
                 }
                 .accessibilityLabel("Text size")
                 Divider()
-                Text("Current chat: \(panelController.model.selectedProviderID == .ollama ? "Ollama" : "ChatGPT") · \(panelController.model.selectedModelID)")
+                Text("Current chat: \(panelController.model.selectedProviderID.displayName) · \(panelController.model.selectedModelID)")
                     .textSelection(.enabled)
                 Text("Use Chat → Change model to choose a provider and model for a new chat.")
                     .font(.caption)

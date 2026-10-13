@@ -16,7 +16,7 @@ actor ChatGPTOAuthClient {
     private let store: KeychainCredentialStore
     private let session: URLSession
     private let callbackSession: OAuthCallbackSession
-    private let noRedirects = OAuthNoRedirects()
+    private let noRedirects = NoRedirects()
     private var signInInProgress = false
     private var signInTask: Task<ChatGPTCredential, Error>?
     private var authorizationVersion = UUID()
@@ -35,8 +35,6 @@ actor ChatGPTOAuthClient {
         let accountID = try store.activeAccountID()
         return try await beginSignIn(existing: accountID.flatMap { try store.load(accountID: $0) })
     }
-
-    func signInNewAccount() async throws -> ChatGPTCredential { try await beginSignIn(existing: nil) }
 
     private func beginSignIn(existing: ChatGPTCredential?) async throws -> ChatGPTCredential {
         guard !isShuttingDown, !signInInProgress else { throw ChatGPTError.signInFailed }
@@ -312,12 +310,6 @@ private struct JWTClaims: Decodable {
     enum CodingKeys: String, CodingKey { case iss, aud, azp, sub, exp, iat, nbf, nonce, email }
 }
 private struct Identity { let subject: String; let email: String? }
-
-private final class OAuthNoRedirects: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
-    func urlSession(_ session: URLSession, task: URLSessionTask,
-                    willPerformHTTPRedirection response: HTTPURLResponse, newRequest request: URLRequest,
-                    completionHandler: @escaping (URLRequest?) -> Void) { completionHandler(nil) }
-}
 
 extension Data {
     var urlBase64: String {

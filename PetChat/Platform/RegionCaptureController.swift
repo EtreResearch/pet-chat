@@ -58,9 +58,7 @@ final class RegionCaptureController {
     private static func screenshot(_ selection: RegionSelection) async throws -> Data {
         let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
         guard let display = content.displays.first(where: { $0.displayID == selection.displayID }),
-              let screen = NSScreen.screens.first(where: {
-                  ($0.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? UInt32) == selection.displayID
-              }), screen.frame == selection.displayFrame else { throw Error.displayUnavailable }
+              let screen = NSScreen.screens.first(where: { $0.displayID == selection.displayID }), screen.frame == selection.displayFrame else { throw Error.displayUnavailable }
         let filter = SCContentFilter(display: display,
             excludingApplications: content.applications.filter { $0.processID == getpid() }, exceptingWindows: [])
         let configuration = try configuration(for: selection, scale: CGFloat(filter.pointPixelScale))

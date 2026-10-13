@@ -11,7 +11,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var shortcutRegistrationError: String?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        NSApp.setActivationPolicy(.accessory)
         #if DEBUG
         if let path = ProcessInfo.processInfo.environment["PET_CHAT_UI_ROOT"] {
             do {

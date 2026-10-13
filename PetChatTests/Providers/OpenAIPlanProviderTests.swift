@@ -53,7 +53,7 @@ final class OpenAIPlanProviderTests: XCTestCase {
             XCTAssertTrue(content[1]["image_url"] as? String == "data:image/png;base64,\(Data([137,80,78,71,13,10,26,10,1]).base64EncodedString())")
             return (200, Self.sse([Self.created, Self.delta("Hi", sequence: 1), Self.delta(" there", sequence: 2), Self.completed("Hi there", sequence: 3).replacingOccurrences(of: #""output":["#, with: #""output":[{"type":"reasoning","id":"rs_test","summary":[]},"#)]))
         }
-        let request = GenerationRequest(id: UUID(), modelID: "vision", messages: [
+        let request = GenerationRequest(id: UUID(), model: .test("vision", images: true), messages: [
             PromptMessage(role: .user, text: "Earlier", attachmentIDs: [old]),
             PromptMessage(role: .assistant, text: "Prior answer", attachmentIDs: []),
             PromptMessage(role: .user, text: "Look", attachmentIDs: [current])
@@ -65,19 +65,6 @@ final class OpenAIPlanProviderTests: XCTestCase {
         }
         XCTAssertEqual(deltas, ["Hi", " there"])
         XCTAssertTrue(completed)
-    }
-
-    func testRejectsHiddenModelAndUnsupportedOrMissingImageBeforeInference() async throws {
-        let provider = try makeProvider()
-        let image = UUID()
-        FakePlanURLProtocol.handler = { request in
-            XCTAssertEqual(request.url?.path, "/v1/models")
-            return (200, Self.models)
-        }
-        for (model, data) in [("hidden", Data()), ("text", Data([137,80,78,71,13,10,26,10])), ("vision", Data())] {
-            let request = GenerationRequest(id: UUID(), modelID: model, messages: [PromptMessage(role: .user, text: "Look", attachmentIDs: [image])], imageData: data.isEmpty ? [:] : [image: data])
-            do { for try await _ in provider.stream(request) {}; XCTFail("Expected rejection") } catch {}
-        }
     }
 
     func testFailedIncompleteAndTruncatedStreamsNeverComplete() async throws {
@@ -164,7 +151,7 @@ final class OpenAIPlanProviderTests: XCTestCase {
         FakePlanURLProtocol.handler = { request in
             (200, request.url?.path == "/v1/models" ? Self.models : Self.sse(events))
         }
-        let request = GenerationRequest(id: UUID(), modelID: "text", messages: [PromptMessage(role: .user, text: "Hi", attachmentIDs: [])], imageData: [:])
+        let request = GenerationRequest(id: UUID(), model: .test("text"), messages: [PromptMessage(role: .user, text: "Hi", attachmentIDs: [])], imageData: [:])
         var completed = false
         do {
             for try await event in provider.stream(request) { if case .completed = event { completed = true } }
@@ -216,7 +203,7 @@ final class OpenAIPlanProviderTests: XCTestCase {
             if request.url?.path == "/v1/models" { return (200, Self.models) }
             return (200, Self.sse([Self.created, #"{"type":"response.failed","sequence_number":1,"response":{"id":"resp_test","object":"response","status":"failed","error":{"code":"subscription_sharing_usage_limit_exceeded"}}}"#]))
         }
-        let request = GenerationRequest(id: UUID(), modelID: "text", messages: [PromptMessage(role: .user, text: "Hi", attachmentIDs: [])], imageData: [:])
+        let request = GenerationRequest(id: UUID(), model: .test("text"), messages: [PromptMessage(role: .user, text: "Hi", attachmentIDs: [])], imageData: [:])
         do { for try await _ in provider.stream(request) {}; XCTFail("Expected usage limit error") }
         catch { XCTAssertTrue(error.localizedDescription.localizedCaseInsensitiveContains("limit"), error.localizedDescription) }
     }
@@ -242,7 +229,7 @@ final class OpenAIPlanProviderTests: XCTestCase {
             return nil
         }
         let id = UUID()
-        let request = GenerationRequest(id: id, modelID: "text", messages: [PromptMessage(role: .user, text: "Hi", attachmentIDs: [])], imageData: [:])
+        let request = GenerationRequest(id: id, model: .test("text"), messages: [PromptMessage(role: .user, text: "Hi", attachmentIDs: [])], imageData: [:])
         let consumer = Task { for try await _ in provider.stream(request) {} }
         await fulfillment(of: [started], timeout: 2)
         await provider.cancel(id)

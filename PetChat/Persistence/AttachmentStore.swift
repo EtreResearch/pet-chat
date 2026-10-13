@@ -45,13 +45,6 @@ struct AttachmentStore {
         if FileManager.default.fileExists(atPath: path.path) { try removeItem(path) }
     }
 
-    func deleteAll(threadID: UUID) throws {
-        let directory = root.appendingPathComponent(threadID.uuidString, isDirectory: true)
-        if FileManager.default.fileExists(atPath: directory.path) {
-            try removeItem(directory)
-        }
-    }
-
     private var pendingRoot: URL { root.appendingPathComponent(".pending-deletion", isDirectory: true) }
 
     func stageDeletion(threadID: UUID) throws -> Bool {

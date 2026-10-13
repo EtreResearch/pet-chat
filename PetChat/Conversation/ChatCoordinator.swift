@@ -112,7 +112,7 @@ final class ChatCoordinator {
             : "Answer concisely in one to three sentences or a few short bullets.\n\n\(text)"
         let prompt = ContextBuilder.build(thread: updated, currentText: promptText, currentAttachmentIDs: imageIDs,
                                           contextWindowTokens: model.contextWindowTokens)
-        let request = GenerationRequest(id: requestID, modelID: thread.modelID, messages: prompt, imageData: images)
+        let request = GenerationRequest(id: requestID, model: model, messages: prompt, imageData: images)
         updated.messages.append(ChatMessage(role: .user, text: text, attachmentIDs: imageIDs))
         updated.messages.append(ChatMessage(role: .pet, text: "", status: .failed))
         try save(updated)

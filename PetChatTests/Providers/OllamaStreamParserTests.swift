@@ -15,7 +15,7 @@ final class OllamaStreamParserTests: XCTestCase {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [MockOllamaURLProtocol.self]
         let provider = OllamaProvider(session: URLSession(configuration: configuration))
-        let request = GenerationRequest(id: UUID(), modelID: "text:latest", messages: [
+        let request = GenerationRequest(id: UUID(), model: .test("text:latest"), messages: [
             PromptMessage(role: .user, text: "Hi", attachmentIDs: [])
         ], imageData: [:])
         var events: [String] = []
@@ -37,7 +37,7 @@ final class OllamaStreamParserTests: XCTestCase {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [MockOllamaURLProtocol.self]
         let provider = OllamaProvider(session: URLSession(configuration: configuration))
-        let request = GenerationRequest(id: UUID(), modelID: "text:latest", messages: [
+        let request = GenerationRequest(id: UUID(), model: .test("text:latest"), messages: [
             PromptMessage(role: .user, text: "Hi", attachmentIDs: [])
         ], imageData: [:])
         var completed = false
@@ -61,7 +61,7 @@ final class OllamaStreamParserTests: XCTestCase {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [MockOllamaURLProtocol.self]
         let provider = OllamaProvider(session: URLSession(configuration: configuration))
-        let request = GenerationRequest(id: UUID(), modelID: "text:latest", messages: [
+        let request = GenerationRequest(id: UUID(), model: .test("text:latest"), messages: [
             PromptMessage(role: .user, text: "Hi", attachmentIDs: [])
         ], imageData: [:])
         defer { MockOllamaURLProtocol.handler = nil }
@@ -91,7 +91,7 @@ final class OllamaStreamParserTests: XCTestCase {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [MockOllamaURLProtocol.self]
         let provider = OllamaProvider(session: URLSession(configuration: configuration))
-        let request = GenerationRequest(id: UUID(), modelID: "text:latest", messages: [
+        let request = GenerationRequest(id: UUID(), model: .test("text:latest"), messages: [
             PromptMessage(role: .user, text: "Hi", attachmentIDs: [])
         ], imageData: [:])
         do {

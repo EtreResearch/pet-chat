@@ -97,18 +97,20 @@ final class AppModel {
         }
     }
 
+    var canTellMeMore: Bool {
+        !isLoading && draft.isEmpty && attachmentIDs.isEmpty &&
+            thread?.messages.last?.role == .pet && thread?.messages.last?.status == .complete
+    }
+
     func select(providerID: ProviderID, modelID: String) throws {
         guard !isShuttingDown, !isLoading else { throw ChatCoordinator.Error.busy }
         let new = try coordinator.newThread(providerID: providerID, modelID: modelID)
-        draftContextID = UUID()
         currentThreadID = new.id
         selectedProviderID = providerID
         selectedModelID = modelID
         defaults.set(providerID.rawValue, forKey: "PetChat.selectedProviderID")
         defaults.set(modelID, forKey: "PetChat.selectedModelID")
-        draft = ""
-        attachmentIDs = []
-        errorMessage = nil
+        resetDraft()
     }
 
     func newChat() throws { try select(providerID: selectedProviderID, modelID: selectedModelID) }
@@ -117,9 +119,13 @@ final class AppModel {
         guard !isShuttingDown, !isLoading else { throw ChatCoordinator.Error.busy }
         guard let id = currentThreadID else { return }
         try coordinator.deleteThread(id)
-        draftContextID = UUID()
         currentThreadID = coordinator.threads.last?.id
         if let thread { selectedProviderID = thread.providerID; selectedModelID = thread.modelID }
+        resetDraft()
+    }
+
+    private func resetDraft() {
+        draftContextID = UUID()
         draft = ""
         attachmentIDs = []
         errorMessage = nil
@@ -196,11 +202,8 @@ final class AppModel {
         }
     }
 
-    func retry() async { await submit() }
-
     func tellMeMore() async {
-        guard draft.isEmpty, attachmentIDs.isEmpty,
-              thread?.messages.last?.role == .pet, thread?.messages.last?.status == .complete else { return }
+        guard canTellMeMore else { return }
         draft = ChatCoordinator.expansionQuestion
         await submit()
     }
@@ -223,12 +226,7 @@ final class AppModel {
     }
 
     func signOutChatGPT() async {
-        if modelLoadProviderID == .chatGPT {
-            modelLoadID = nil
-            modelLoadTask?.cancel()
-            modelLoadTask = nil
-            modelLoadProviderID = nil
-        }
+        if modelLoadProviderID == .chatGPT { cancelModelLoad() }
         if selectedProviderID == .chatGPT { activeSubmissionID = nil }
         do { try await signOut() } catch { report(error) }
         do { try await coordinator.stopAll(providerID: .chatGPT) } catch { report(error) }
@@ -243,10 +241,7 @@ final class AppModel {
 
     func shutdown() async {
         isShuttingDown = true
-        modelLoadID = nil
-        modelLoadTask?.cancel()
-        modelLoadTask = nil
-        modelLoadProviderID = nil
+        cancelModelLoad()
         draftContextID = UUID()
         captureTask?.cancel()
         activeSubmissionID = nil
@@ -255,6 +250,13 @@ final class AppModel {
         do { try await coordinator.stopAll() } catch { report(error) }
         submissionTask?.cancel()
         submissionTask = nil
+    }
+
+    private func cancelModelLoad() {
+        modelLoadID = nil
+        modelLoadTask?.cancel()
+        modelLoadTask = nil
+        modelLoadProviderID = nil
     }
 
     func report(_ error: Error) { errorMessage = error.localizedDescription }

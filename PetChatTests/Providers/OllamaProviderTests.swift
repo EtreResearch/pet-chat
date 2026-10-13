@@ -63,7 +63,7 @@ final class OllamaProviderTests: XCTestCase {
             let provider = provider()
             let models = try await provider.availableModels()
             XCTAssertEqual(models.first?.contextWindowTokens, item.context)
-            let request = GenerationRequest(id: UUID(), modelID: item.name, messages: [
+            let request = GenerationRequest(id: UUID(), model: try XCTUnwrap(models.first), messages: [
                 PromptMessage(role: .user, text: "Hi", attachmentIDs: [])
             ], imageData: [:])
             var completed = false
@@ -89,41 +89,6 @@ final class OllamaProviderTests: XCTestCase {
         }
     }
 
-    func testRejectsImagesForTextOnlyModel() async throws {
-        let imageID = UUID()
-        MockOllamaURLProtocol.handler = { request in
-            XCTAssertEqual(request.url?.path, "/api/show")
-            return (200, #"{"capabilities":["completion"]}"#.data(using: .utf8)!)
-        }
-        let request = GenerationRequest(id: UUID(), modelID: "text:latest", messages: [
-            PromptMessage(role: .user, text: "Look", attachmentIDs: [imageID])
-        ], imageData: [imageID: Data([1, 2, 3])])
-
-        do {
-            for try await _ in provider().stream(request) { XCTFail("Should not emit") }
-            XCTFail("Expected unsupported image error")
-        } catch {
-            XCTAssertTrue(error.localizedDescription.localizedCaseInsensitiveContains("image"))
-        }
-    }
-
-    func testRejectsImagesWhenCapabilityIsUnknown() async throws {
-        let imageID = UUID()
-        MockOllamaURLProtocol.handler = { request in
-            XCTAssertEqual(request.url?.path, "/api/show")
-            return (200, #"{"model_info":{}}"#.data(using: .utf8)!)
-        }
-        let request = GenerationRequest(id: UUID(), modelID: "unknown", messages: [
-            PromptMessage(role: .user, text: "Look", attachmentIDs: [imageID])
-        ], imageData: [imageID: Data([1])])
-        do {
-            for try await _ in provider().stream(request) { XCTFail("Should not emit") }
-            XCTFail("Expected unsupported image error")
-        } catch {
-            XCTAssertTrue(error.localizedDescription.localizedCaseInsensitiveContains("image"))
-        }
-    }
-
     func testSendsImagesOnlyOnCurrentPromptForVisionModel() async throws {
         let oldID = UUID()
         let currentID = UUID()
@@ -142,7 +107,7 @@ final class OllamaProviderTests: XCTestCase {
             XCTAssertEqual((body["options"] as? [String: Int])?["num_ctx"], 4096)
             return (200, Data((#"{"model":"vision","message":{"role":"assistant","content":""},"done":true}"# + "\n").utf8))
         }
-        let request = GenerationRequest(id: UUID(), modelID: "vision", messages: [
+        let request = GenerationRequest(id: UUID(), model: .test("vision", images: true), messages: [
             PromptMessage(role: .user, text: "Old", attachmentIDs: [oldID]),
             PromptMessage(role: .user, text: "Look", attachmentIDs: [currentID])
         ], imageData: [oldID: Data([9]), currentID: Data([1, 2, 3])])
@@ -181,7 +146,7 @@ final class OllamaProviderTests: XCTestCase {
                 #"{"model":"text:latest","message":{"role":"assistant","content":""},"done":true}"# + "\n"
             ).utf8))
         }
-        let request = GenerationRequest(id: UUID(), modelID: "text:latest", messages: [
+        let request = GenerationRequest(id: UUID(), model: .test("text:latest"), messages: [
             PromptMessage(role: .user, text: "Hi", attachmentIDs: []),
             PromptMessage(role: .assistant, text: "Hello", attachmentIDs: []),
             PromptMessage(role: .user, text: "Again", attachmentIDs: [])
@@ -210,7 +175,7 @@ final class OllamaProviderTests: XCTestCase {
         }
         let provider = provider()
         let id = UUID()
-        let request = GenerationRequest(id: id, modelID: "text:latest", messages: [
+        let request = GenerationRequest(id: id, model: .test("text:latest"), messages: [
             PromptMessage(role: .user, text: "Hi", attachmentIDs: [])
         ], imageData: [:])
         let consumer = Task {
@@ -280,5 +245,11 @@ private extension URLRequest {
             if count <= 0 { return body }
             body.append(contentsOf: buffer[..<count])
         }
+    }
+}
+
+extension ProviderModel {
+    static func test(_ id: String, images: Bool = false) -> ProviderModel {
+        ProviderModel(id: id, displayName: id, supportsImages: images, contextWindowTokens: 4096)
     }
 }

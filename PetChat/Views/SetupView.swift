@@ -11,8 +11,7 @@ struct SetupView: View {
             VStack(alignment: .leading, spacing: 12) {
                 Text("Choose a provider and model").font(.headline)
                 Picker("Provider", selection: $providerID) {
-                    Text("Ollama").tag(ProviderID.ollama)
-                    Text("ChatGPT").tag(ProviderID.chatGPT)
+                    ForEach([ProviderID.ollama, .chatGPT], id: \.self) { Text($0.displayName).tag($0) }
                 }
                 .accessibilityLabel("Provider")
                 .onChange(of: providerID) { _, value in
