@@ -5,7 +5,7 @@ import Observation
 final class ChatCoordinator {
     static let expansionQuestion = "Tell me more about your last answer."
     enum Error: LocalizedError {
-        case missingThread, missingProvider, missingModel, busy, emptyMessage, incompleteResponse, stopped, unsupportedImages
+        case missingThread, missingProvider, missingModel, busy, emptyMessage, incompleteResponse, stopped, unsupportedImages, nothingToRegenerate
 
         var errorDescription: String? {
             switch self {
@@ -17,6 +17,7 @@ final class ChatCoordinator {
             case .incompleteResponse: "The answer ended before it completed. Try again."
             case .unsupportedImages: "This model does not support images. Select an image-capable model."
             case .stopped: "Stopped before sending. Your draft is saved."
+            case .nothingToRegenerate: "There is no answer to retry."
             }
         }
     }
@@ -77,6 +78,18 @@ final class ChatCoordinator {
     }
 
     func send(text: String, attachmentIDs: [UUID], threadID: UUID) async throws {
+        try await generate(text: text, attachmentIDs: attachmentIDs, threadID: threadID, replacingLastReply: false)
+    }
+
+    /// Replaces the chat's last reply with a fresh answer to the same question; earlier history is untouched.
+    func regenerateLastReply(threadID: UUID) async throws {
+        guard let thread = threads.first(where: { $0.id == threadID }) else { throw Error.missingThread }
+        guard let question = thread.lastAnsweredQuestion else { throw Error.nothingToRegenerate }
+        try await generate(text: question.text, attachmentIDs: question.attachmentIDs, threadID: threadID,
+                           replacingLastReply: true)
+    }
+
+    private func generate(text: String, attachmentIDs: [UUID], threadID: UUID, replacingLastReply: Bool) async throws {
         guard let index = threads.firstIndex(where: { $0.id == threadID }) else { throw Error.missingThread }
         guard activeRequests[threadID] == nil else { throw Error.busy }
         guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !attachmentIDs.isEmpty else { throw Error.emptyMessage }
@@ -99,7 +112,13 @@ final class ChatCoordinator {
         let imageIDs = attachmentIDs.filter { seen.insert($0).inserted }
         let images = try Dictionary(uniqueKeysWithValues: imageIDs.map { ($0, try attachments.load($0, threadID: threadID)) })
         var updated = thread
-        if updated.messages.count >= 2,
+        // Regenerating keeps the original question message (and its attachment files) and re-asks it.
+        var question = ChatMessage(role: .user, text: text, attachmentIDs: imageIDs)
+        if replacingLastReply {
+            guard let last = updated.lastAnsweredQuestion else { throw Error.nothingToRegenerate }
+            question = last
+            updated.messages.removeLast(2)
+        } else if updated.messages.count >= 2,
            updated.messages[updated.messages.count - 2].role == .user,
            updated.messages[updated.messages.count - 2].text == text,
            updated.messages[updated.messages.count - 2].attachmentIDs == imageIDs,
@@ -113,7 +132,7 @@ final class ChatCoordinator {
         let prompt = ContextBuilder.build(thread: updated, currentText: promptText, currentAttachmentIDs: imageIDs,
                                           contextWindowTokens: model.contextWindowTokens)
         let request = GenerationRequest(id: requestID, model: model, messages: prompt, imageData: images)
-        updated.messages.append(ChatMessage(role: .user, text: text, attachmentIDs: imageIDs))
+        updated.messages.append(question)
         updated.messages.append(ChatMessage(role: .pet, text: "", status: .failed))
         try save(updated)
         pendingRequests.remove(requestID)

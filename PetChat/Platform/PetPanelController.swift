@@ -28,7 +28,7 @@ struct PetPosition {
     }
 
     static func chatFrame(near pet: CGPoint, visibleFrame: CGRect) -> CGRect {
-        let size = CGSize(width: min(340, visibleFrame.width), height: min(420, visibleFrame.height))
+        let size = CGSize(width: min(440, visibleFrame.width), height: min(530, visibleFrame.height))
         let above = pet.y + 72
         let y = above + size.height <= visibleFrame.maxY ? above : pet.y - size.height - 8
         return CGRect(origin: clamp(CGPoint(x: pet.x + 64 - size.width, y: y), size: size, to: visibleFrame), size: size)
@@ -87,7 +87,7 @@ final class PetPanelController: NSObject {
         self.fullScreenProvider = fullScreenProvider
         petPanel = NSPanel(contentRect: CGRect(x: 0, y: 0, width: 64, height: 64),
                            styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
-        chatPanel = ChatFloatingPanel(contentRect: CGRect(x: 0, y: 0, width: 340, height: 420),
+        chatPanel = ChatFloatingPanel(contentRect: CGRect(x: 0, y: 0, width: 440, height: 530),
                                       styleMask: [.borderless], backing: .buffered, defer: false)
         super.init()
         for panel in [petPanel, chatPanel] {
@@ -265,7 +265,7 @@ private struct FloatingChatRootView: View {
                     }.padding(10)
                     SetupView(model: model, onSelected: { choosingModel = false })
                     Spacer(minLength: 0)
-                }.frame(width: 340, height: 420)
+                }.frame(width: 440, height: 530)
             } else {
                 ChatPanelView(model: model, onClose: onClose, onChangeModel: { choosingModel = true })
             }

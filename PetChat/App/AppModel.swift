@@ -25,6 +25,9 @@ final class AppModel {
     private var activeSubmissionID: UUID?
     private(set) var errorMessage: String?
     private(set) var canRetrySubmission = false
+    private enum Generation { case submit, regenerate }
+    /// What the error-bar Retry re-runs; set whenever `canRetrySubmission` turns on.
+    private var failedGeneration = Generation.submit
     private(set) var models: [ProviderModel] = []
     private var modelLoadID: UUID?
     private var modelLoadProviderID: ProviderID?
@@ -62,6 +65,7 @@ final class AppModel {
                 attachmentIDs = question.attachmentIDs
                 errorMessage = ChatCoordinator.Error.incompleteResponse.localizedDescription
                 canRetrySubmission = true
+                failedGeneration = .submit
             }
         } else {
             selectedProviderID = ProviderID(rawValue: defaults.string(forKey: "PetChat.selectedProviderID") ?? "") ?? .ollama
@@ -112,6 +116,14 @@ final class AppModel {
     var canTellMeMore: Bool {
         !isLoading && draft.isEmpty && attachmentIDs.isEmpty &&
             thread?.messages.last?.role == .pet && thread?.messages.last?.status == .complete
+    }
+
+    var canSend: Bool {
+        !isLoading && !isCapturing && !(draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && attachmentIDs.isEmpty)
+    }
+
+    var canRegenerate: Bool {
+        !isLoading && !isCapturing && thread?.lastAnsweredQuestion != nil
     }
 
     func select(providerID: ProviderID, modelID: String) throws {
@@ -195,16 +207,40 @@ final class AppModel {
     }
 
     func submit() async {
-        guard !isShuttingDown, let id = currentThreadID, !isLoading else { return }
-        guard selectedProviderID != .chatGPT || !isSigningOutChatGPT else { return }
         let text = draft
         let images = attachmentIDs
+        guard await generate(.submit, { [coordinator] id in
+            try await coordinator.send(text: text, attachmentIDs: images, threadID: id)
+        }), thread?.messages.last?.status == .complete else { return }
+        if draft == text { draft = "" }
+        attachmentIDs.removeAll { images.contains($0) }
+    }
+
+    func regenerateLastReply() async {
+        guard canRegenerate else { return }
+        _ = await generate(.regenerate) { [coordinator] id in try await coordinator.regenerateLastReply(threadID: id) }
+    }
+
+    /// Error-bar Retry: re-runs whichever generation failed, so a failed regenerate never sends the composer draft.
+    func retry() async {
+        switch failedGeneration {
+        case .submit: await submit()
+        case .regenerate: await regenerateLastReply()
+        }
+    }
+
+    /// Runs one generation in the current chat. Returns true when it finished without error and is still the
+    /// active submission for the same chat.
+    private func generate(_ kind: Generation,
+                          _ work: @escaping @MainActor @Sendable (UUID) async throws -> Void) async -> Bool {
+        guard !isShuttingDown, let id = currentThreadID, !isLoading else { return false }
+        guard selectedProviderID != .chatGPT || !isSigningOutChatGPT else { return false }
         let submissionID = UUID()
         activeSubmissionID = submissionID
         isLoading = true
         errorMessage = nil
         canRetrySubmission = false
-        let task = Task { try await coordinator.send(text: text, attachmentIDs: images, threadID: id) }
+        let task = Task { try await work(id) }
         submissionTask = task
         defer {
             if activeSubmissionID == submissionID {
@@ -215,22 +251,27 @@ final class AppModel {
         }
         do {
             try await withTaskCancellationHandler { try await task.value } onCancel: { task.cancel() }
-            if activeSubmissionID == submissionID, currentThreadID == id,
-               thread?.messages.last?.status == .complete {
-                if draft == text { draft = "" }
-                attachmentIDs.removeAll { images.contains($0) }
-            }
+            return activeSubmissionID == submissionID && currentThreadID == id
         } catch {
             if activeSubmissionID == submissionID {
                 errorMessage = error.localizedDescription
                 canRetrySubmission = true
+                failedGeneration = kind
             }
+            return false
         }
     }
 
     func tellMeMore() async {
         guard canTellMeMore else { return }
         draft = ChatCoordinator.expansionQuestion
+        await submit()
+    }
+
+    /// Suggestion chip: sends `text` through the normal submit path; ignored while the composer holds a draft or image.
+    func sendSuggestion(_ text: String) async {
+        guard !isLoading, draft.isEmpty, attachmentIDs.isEmpty else { return }
+        draft = text
         await submit()
     }
 

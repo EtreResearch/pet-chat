@@ -110,6 +110,21 @@ final class ChatFlowUITests: IsolatedUITestCase {
         XCTAssertEqual(app.textViews["Message"].value as? String, "Keep this draft")
     }
 
+    func testReturnSendsAndShiftReturnInsertsNewline() {
+        openChat()
+        chooseModel()
+        let message = app.textViews["Message"]
+        message.click()
+        message.typeText("Line one")
+        message.typeKey(.return, modifierFlags: .shift)
+        message.typeText("Line two")
+        XCTAssertEqual(message.value as? String, "Line one\nLine two")
+        XCTAssertFalse(text("Answer").exists)
+        message.typeKey(.return, modifierFlags: [])
+        XCTAssertTrue(text("Answer 1: Line one").waitForExistence(timeout: 5))
+        XCTAssertEqual(message.value as? String, "")
+    }
+
     func testStopAndRetry() {
         openChat()
         chooseModel()

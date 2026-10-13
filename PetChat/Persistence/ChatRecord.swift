@@ -32,6 +32,7 @@ final class MessageRecord {
     var text: String
     var attachmentIDs: [UUID]
     var status: String
+    var createdAt: Date?
 
     init(_ message: ChatMessage, position: Int) {
         id = message.id
@@ -40,12 +41,13 @@ final class MessageRecord {
         text = message.text
         attachmentIDs = message.attachmentIDs
         status = message.status.rawValue
+        createdAt = message.createdAt
     }
 
     func message() throws -> ChatMessage {
         guard let role = ChatMessage.Role(rawValue: role), let status = ChatMessage.Status(rawValue: status) else {
             throw LocalChatStore.Error.invalidRecord
         }
-        return ChatMessage(id: id, role: role, text: text, attachmentIDs: attachmentIDs, status: status)
+        return ChatMessage(id: id, role: role, text: text, attachmentIDs: attachmentIDs, status: status, createdAt: createdAt)
     }
 }
