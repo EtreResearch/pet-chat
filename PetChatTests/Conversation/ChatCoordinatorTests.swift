@@ -283,6 +283,20 @@ final class ChatCoordinatorTests: XCTestCase {
         try await send.value
     }
 
+    func testAppModelCanSendNeedsTextOrImage() throws {
+        let fixture = try Fixture()
+        let model = AppModel(coordinator: fixture.coordinator, auth: fixture.auth, defaults: fixture.defaults)
+        try model.select(providerID: .ollama, modelID: "text")
+        XCTAssertFalse(model.canSend)
+        model.draft = " \n "
+        XCTAssertFalse(model.canSend)
+        model.draft = "Hi"
+        XCTAssertTrue(model.canSend)
+        model.draft = ""
+        model.attachmentIDs = [UUID()]
+        XCTAssertTrue(model.canSend)
+    }
+
     func testAppModelRegenerateFailureRetriesRegenerateNotDraft() async throws {
         let fixture = try Fixture()
         fixture.provider.events = [.textDelta("Old"), .completed]

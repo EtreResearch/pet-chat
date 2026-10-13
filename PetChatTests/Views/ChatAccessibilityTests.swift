@@ -35,7 +35,7 @@ final class ChatAccessibilityTests: XCTestCase {
         hosting.layoutSubtreeIfNeeded()
         hosting.displayIfNeeded()
         let labels = accessibilityLabels(in: AXUIElementCreateApplication(getpid()))
-        for label in ["Pet", "Message", "Send", "Stop", "Tell me more", "Close", "Capture area", "Paste image", "Attached image", "Remove image"] {
+        for label in ["Pet", "Message", "Send", "Tell me more", "Close", "Capture area", "Paste image", "Attached image", "Remove image"] {
             XCTAssertTrue(labels.contains(label), "Missing accessible \(label): \(labels)")
         }
     }

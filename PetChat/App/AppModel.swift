@@ -118,6 +118,10 @@ final class AppModel {
             thread?.messages.last?.role == .pet && thread?.messages.last?.status == .complete
     }
 
+    var canSend: Bool {
+        !isLoading && !isCapturing && !(draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && attachmentIDs.isEmpty)
+    }
+
     var canRegenerate: Bool {
         !isLoading && !isCapturing && thread?.lastAnsweredQuestion != nil
     }
