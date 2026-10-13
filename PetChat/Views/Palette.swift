@@ -16,7 +16,7 @@ enum Palette {
     static let border = dynamic(light: 0xD9D9D6, dark: 0x3A3B3A)
     /// Capture / Paste button fill.
     static let secondaryFill = dynamic(light: 0xF2F2F0, dark: 0x2A2B2A)
-    // ponytail: the design has no error styling; a soft red tint is a placeholder until a later task needs it.
+    /// Error bar fill. ponytail: the design has no error styling; a soft red tint stands in.
     static let errorFill = dynamic(light: 0xFBEAEA, dark: 0x3A2626)
 
     private static func dynamic(light: UInt32, dark: UInt32) -> Color {

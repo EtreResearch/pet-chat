@@ -70,7 +70,7 @@ struct ComposerView: View {
                     .scrollIndicators(.never)
                     .focused($isFocused)
                     .onAppear { if NSApp.isActive { isFocused = true } }
-                    .onKeyPress(.return, phases: .down) { handleReturn($0) }
+                    .onKeyPress(.return, phases: [.down, .repeat]) { handleReturn($0) }
                     .accessibilityLabel("Message")
             }
     }

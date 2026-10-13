@@ -30,9 +30,11 @@ struct ChatPanelView: View {
                 .background(Palette.sage, in: RoundedRectangle(cornerRadius: 11))
                 .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 2) {
-                Text("Pet Chat").font(.system(size: 19, weight: .semibold))
+                Text("Pet Chat").font(.system(size: 19, weight: .semibold)).lineLimit(1)
                 Text("\(model.selectedProviderID.displayName) · \(model.selectedModelID)")
                     .font(.system(size: 12))
+                    .lineLimit(1)
+                    .truncationMode(.middle)
                     .foregroundStyle(Palette.secondaryText)
             }
             Spacer()
@@ -81,6 +83,8 @@ struct ChatPanelView: View {
         let lastPetID = messages.last { $0.role == .pet }?.id
         return ScrollViewReader { proxy in
             ScrollView {
+                // ponytail: a plain VStack re-lays-out and re-parses markdown for every row on each streamed token;
+                // switch to LazyVStack if long chats lag.
                 VStack(alignment: .leading, spacing: 16) {
                     ForEach(ChatMessage.daySections(messages, now: Date(), calendar: .current), id: \.title) { section in
                         Text(section.title)
@@ -92,6 +96,8 @@ struct ChatPanelView: View {
                                 .id(message.id)
                         }
                     }
+                    // Provider model discovery runs before Pet's reply exists; show the dots until it does.
+                    if model.isLoading && messages.last?.role != .pet { row(Self.pendingReply, isLastReply: false) }
                     chips(afterReply: !messages.isEmpty)
                     Color.clear.frame(height: 1).id(Self.bottomID)
                 }
@@ -107,9 +113,11 @@ struct ChatPanelView: View {
     }
 
     private static let bottomID = "bottom"
+    private static let pendingReply = ChatMessage(role: .pet, text: "", createdAt: nil)
 
     private func row(_ message: ChatMessage, isLastReply: Bool) -> some View {
-        let isStreaming = model.isLoading && message.id == model.thread?.messages.last?.id
+        let last = model.thread?.messages.last
+        let isStreaming = model.isLoading && message.role == .pet && (message.id == last?.id || message.id == Self.pendingReply.id)
         // The error bar's Retry covers a failed generation, so the reply Retry steps aside while it shows.
         let showsRetry = isLastReply && model.canRegenerate && !model.canRetrySubmission
         return MessageRowView(message: message, outsideContext: model.excludedMessageIDs.contains(message.id),
@@ -156,6 +164,8 @@ struct ChatPanelView: View {
             Text(error)
                 .font(.system(size: 11))
                 .lineLimit(2)
+                .textSelection(.enabled)
+                .help(error)
                 .frame(maxWidth: .infinity, alignment: .leading)
             if model.canRetrySubmission {
                 Button("Retry") { Task { await model.retry() } }
