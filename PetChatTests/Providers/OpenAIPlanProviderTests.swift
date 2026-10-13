@@ -51,7 +51,7 @@ final class OpenAIPlanProviderTests: XCTestCase {
             XCTAssertEqual(content[0]["text"] as? String, "Look")
             XCTAssertEqual(content[1]["type"] as? String, "input_image")
             XCTAssertTrue(content[1]["image_url"] as? String == "data:image/png;base64,\(Data([137,80,78,71,13,10,26,10,1]).base64EncodedString())")
-            return (200, Self.sse([Self.created, Self.delta("Hi", sequence: 1), Self.delta(" there", sequence: 2), Self.completed("Hi there", sequence: 3).replacingOccurrences(of: #""output":["#, with: #""output":[{"type":"reasoning","id":"rs_test","summary":[]},"#)]))
+            return (200, Self.sse([Self.created, Self.delta("Hi", sequence: 1, outputIndex: 1), Self.delta(" there", sequence: 2, outputIndex: 1), Self.completed("Hi there", sequence: 3).replacingOccurrences(of: #""output":["#, with: #""output":[{"type":"reasoning","id":"rs_test","summary":[]},"#)]))
         }
         let request = GenerationRequest(id: UUID(), model: .test("vision", images: true), messages: [
             PromptMessage(role: .user, text: "Earlier", attachmentIDs: [old]),
@@ -65,6 +65,31 @@ final class OpenAIPlanProviderTests: XCTestCase {
         }
         XCTAssertEqual(deltas, ["Hi", " there"])
         XCTAssertTrue(completed)
+    }
+
+    func testMissingModalityMetadataDefaultsToImagesButExplicitTextOnlyDoesNot() async throws {
+        let provider = try makeProvider()
+        FakePlanURLProtocol.handler = { _ in
+            (200, Data(#"{"models":[{"slug":"legacy","display_name":"Legacy","visibility":"list"},{"slug":"alias","display_name":"Alias","visibility":"list","supported_input_modalities":["text","image"]},{"slug":"text","display_name":"Text","visibility":"list","input_modalities":["text"],"supported_input_modalities":["image"]},{"slug":"empty","display_name":"Empty","visibility":"list","input_modalities":[]}]}"#.utf8))
+        }
+        let models = try await provider.availableModels()
+        XCTAssertEqual(models.map(\.supportsImages), [true, true, false, false])
+    }
+
+    func testRejectsEventsAfterCompletedFrame() async throws {
+        for trailing in [Self.delta("late", sequence: 3), Self.completed("partial", sequence: 3),
+                         #"{"type":"response.failed","sequence_number":3,"response":{"id":"resp_test","object":"response","status":"failed","error":{"code":"usage_limit"}}}"#] {
+            try await assertRejected([Self.created, Self.delta("partial", sequence: 1),
+                                      Self.completed("partial", sequence: 2), trailing])
+        }
+    }
+
+    func testRejectsTerminalTextDifferentFromStreamedText() async throws {
+        for terminal in [Self.completed("partial plus missing text", sequence: 2),
+                         Self.completed("different", sequence: 2),
+                         Self.completed("partial", sequence: 2).replacingOccurrences(of: "msg_test", with: "msg_other")] {
+            try await assertRejected([Self.created, Self.delta("partial", sequence: 1), terminal])
+        }
     }
 
     func testFailedIncompleteAndTruncatedStreamsNeverComplete() async throws {
@@ -184,8 +209,8 @@ final class OpenAIPlanProviderTests: XCTestCase {
 
     private static let created = #"{"type":"response.created","sequence_number":0,"response":{"id":"resp_test","object":"response","status":"in_progress","error":null,"output":[]}}"#
 
-    private static func delta(_ text: String, sequence: Int, refusal: Bool = false) -> String {
-        String(data: try! JSONSerialization.data(withJSONObject: ["type": refusal ? "response.refusal.delta" : "response.output_text.delta", "delta": text, "item_id": "msg_test", "output_index": 0, "content_index": 0, "sequence_number": sequence]), encoding: .utf8)!
+    private static func delta(_ text: String, sequence: Int, refusal: Bool = false, outputIndex: Int = 0) -> String {
+        String(data: try! JSONSerialization.data(withJSONObject: ["type": refusal ? "response.refusal.delta" : "response.output_text.delta", "delta": text, "item_id": "msg_test", "output_index": outputIndex, "content_index": 0, "sequence_number": sequence]), encoding: .utf8)!
     }
 
     private static func completed(_ text: String, sequence: Int, refusal: Bool = false) -> String {

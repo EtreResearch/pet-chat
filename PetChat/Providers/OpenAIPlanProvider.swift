@@ -25,9 +25,8 @@ final class OpenAIPlanProvider: ChatProvider, @unchecked Sendable {
             throw ChatGPTError.invalidResponse
         }
         return catalog.models.filter { $0.visibility == "list" && !$0.slug.isEmpty && !$0.displayName.isEmpty }.map {
-            // shortcut: absent image metadata means text-only; verify per-model capabilities if the catalog omits modalities.
             ProviderModel(id: $0.slug, displayName: $0.displayName,
-                          supportsImages: ($0.inputModalities ?? $0.supportedInputModalities)?.contains("image") == true,
+                          supportsImages: ($0.inputModalities ?? $0.supportedInputModalities ?? ["text", "image"]).contains("image"),
                           contextWindowTokens: $0.contextWindow)
         }
     }
@@ -60,12 +59,13 @@ final class OpenAIPlanProvider: ChatProvider, @unchecked Sendable {
             try check(response, expected: urlRequest.url!)
             var eventData = Data()
             var state = StreamState()
-            var completed = try await bytes.forEachLine(maxBytes: maxLineBytes, tooLong: ChatGPTError.invalidResponse) { line in
-                try process(line: line, eventData: &eventData, state: &state, continuation: continuation)
+            _ = try await bytes.forEachLine(maxBytes: maxLineBytes, tooLong: ChatGPTError.invalidResponse) { line in
+                _ = try process(line: line, eventData: &eventData, state: &state, continuation: continuation)
+                return false
             }
-            if !completed, !eventData.isEmpty { completed = try dispatch(eventData, state: &state, continuation: continuation) }
+            if !eventData.isEmpty { _ = try dispatch(eventData, state: &state, continuation: continuation) }
             try Task.checkCancellation()
-            guard completed else { throw ChatGPTError.incompleteResponse }
+            guard state.completed else { throw ChatGPTError.incompleteResponse }
         }
     }
 
@@ -98,6 +98,7 @@ final class OpenAIPlanProvider: ChatProvider, @unchecked Sendable {
 
     private func dispatch(_ data: Data, state: inout StreamState,
                           continuation: AsyncThrowingStream<GenerationEvent, Error>.Continuation) throws -> Bool {
+        guard !state.completed else { throw ChatGPTError.invalidResponse }
         guard let event = try? JSONDecoder().decode(StreamEvent.self, from: data) else {
             throw ChatGPTError.invalidResponse
         }
@@ -114,25 +115,22 @@ final class OpenAIPlanProvider: ChatProvider, @unchecked Sendable {
         case "response.created":
             guard event.response?.status == "in_progress" else { throw ChatGPTError.invalidResponse }
             return false
-        case "response.output_text.delta":
-            guard let delta = event.delta else { throw ChatGPTError.invalidResponse }
-            if !delta.isEmpty { state.hasText = true; continuation.yield(.textDelta(delta)) }
-            return false
-        case "response.refusal.delta", "response.refusal.done":
+        case "response.output_text.delta", "response.refusal.delta", "response.refusal.done":
             guard let itemID = event.itemID, !itemID.isEmpty,
                   let outputIndex = event.outputIndex, outputIndex >= 0,
                   let contentIndex = event.contentIndex, contentIndex >= 0 else { throw ChatGPTError.invalidResponse }
-            let key = RefusalKey(itemID: itemID, outputIndex: outputIndex, contentIndex: contentIndex)
-            let previous = state.refusals[key, default: ""]
+            let key = ContentKey(itemID: itemID, outputIndex: outputIndex, contentIndex: contentIndex,
+                                 type: event.type == "response.output_text.delta" ? "output_text" : "refusal")
+            let previous = state.text[key, default: ""]
             let delta: String
-            if event.type == "response.refusal.delta" {
+            if event.type != "response.refusal.done" {
                 guard let text = event.delta else { throw ChatGPTError.invalidResponse }
                 delta = text
-                state.refusals[key] = previous + text
+                state.text[key] = previous + text
             } else {
                 guard let text = event.refusal, text.hasPrefix(previous) else { throw ChatGPTError.invalidResponse }
                 delta = String(text.dropFirst(previous.count))
-                state.refusals[key] = text
+                state.text[key] = text
             }
             if !delta.isEmpty { state.hasText = true; continuation.yield(.textDelta(delta)) }
             return false
@@ -141,6 +139,18 @@ final class OpenAIPlanProvider: ChatProvider, @unchecked Sendable {
                   let output = response.output, state.hasText else { throw ChatGPTError.invalidResponse }
             let messages = output.filter { $0.type == "message" }
             guard !messages.isEmpty, messages.allSatisfy(\.isCompleteMessage) else { throw ChatGPTError.invalidResponse }
+            var terminalText: [ContentKey: String] = [:]
+            for (outputIndex, message) in output.enumerated() where message.type == "message" {
+                for (contentIndex, part) in message.content!.enumerated() {
+                    let key = ContentKey(itemID: message.id!, outputIndex: outputIndex,
+                                         contentIndex: contentIndex, type: part.type)
+                    terminalText[key] = part.type == "output_text" ? part.text! : part.refusal!
+                }
+            }
+            guard terminalText.filter({ !$0.value.isEmpty }) == state.text.filter({ !$0.value.isEmpty }) else {
+                throw ChatGPTError.invalidResponse
+            }
+            state.completed = true
             return true
         case "response.failed":
             if let code = event.response?.error?.code,
@@ -179,16 +189,18 @@ private struct PlanModel: Decodable {
     }
 }
 private struct StreamState {
+    var completed = false
     var lastSequence = -1
     var responseID: String?
     var hasText = false
-    var refusals: [RefusalKey: String] = [:]
+    var text: [ContentKey: String] = [:]
 }
 
-private struct RefusalKey: Hashable {
+private struct ContentKey: Hashable {
     let itemID: String
     let outputIndex: Int
     let contentIndex: Int
+    let type: String
 }
 
 private struct StreamEvent: Decodable {
