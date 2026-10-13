@@ -61,6 +61,23 @@ final class LocalChatStoreTests: XCTestCase {
         XCTAssertEqual(try attachments.load(secondImage, threadID: second.id), testPNG(2))
     }
 
+    func testMessageCreatedAtSurvivesSaveAndLoad() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let container = try ModelContainer(for: ChatRecord.self, MessageRecord.self, configurations: ModelConfiguration(isStoredInMemoryOnly: true))
+        let store = try LocalChatStore(container: container, attachments: AttachmentStore(root: root))
+        let date = Date(timeIntervalSinceReferenceDate: 5000)
+        let thread = ChatThread(providerID: .ollama, modelID: "a", messages: [
+            ChatMessage(role: .user, text: "dated", createdAt: date),
+            ChatMessage(role: .pet, text: "undated", createdAt: nil)
+        ])
+
+        try store.save(thread)
+
+        let loaded = try store.load().first?.messages
+        XCTAssertEqual(loaded?.map(\.createdAt), [date, nil])
+    }
+
     func testFailedSaveDoesNotReportSuccess() throws {
         enum Failure: Error { case unavailable }
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
