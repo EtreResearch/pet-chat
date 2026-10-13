@@ -1,8 +1,43 @@
 import Foundation
+import SwiftData
 import XCTest
 @testable import PetChat
 
 final class OllamaStreamParserTests: XCTestCase {
+    @MainActor
+    func testLengthLimitedAnswerKeepsPartialFailedTurnAndRetryDraft() async throws {
+        MockOllamaURLProtocol.handler = { request in
+            switch request.url?.path {
+            case "/api/tags": return (200, Data(#"{"models":[{"name":"text:latest"}]}"#.utf8))
+            case "/api/show": return (200, Data("{}".utf8))
+            default: return (200, Data((
+                #"{"model":"text:latest","message":{"role":"assistant","content":"partial"},"done":false}"# + "\n" +
+                #"{"model":"text:latest","message":{"role":"assistant","content":" ending"},"done":true,"done_reason":"length"}"# + "\n"
+            ).utf8))
+            }
+        }
+        defer { MockOllamaURLProtocol.handler = nil }
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [MockOllamaURLProtocol.self]
+        let provider = OllamaProvider(session: URLSession(configuration: configuration))
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let suite = "PetChat.LengthTests.\(UUID())"
+        defer { try? FileManager.default.removeItem(at: root); UserDefaults().removePersistentDomain(forName: suite) }
+        let attachments = AttachmentStore(root: root)
+        let container = try ModelContainer(for: ChatRecord.self, MessageRecord.self,
+                                           configurations: ModelConfiguration(isStoredInMemoryOnly: true))
+        let store = try LocalChatStore(container: container, attachments: attachments)
+        let coordinator = try ChatCoordinator(providers: [.ollama: provider], store: store, attachments: attachments)
+        let model = AppModel(coordinator: coordinator, defaults: UserDefaults(suiteName: suite)!)
+        try model.select(providerID: .ollama, modelID: "text:latest")
+        model.draft = "Explain this"
+        await model.submit()
+        XCTAssertEqual(model.thread?.messages.last?.text, "partial ending")
+        XCTAssertEqual(try store.load().last?.messages.last?.status, .failed)
+        XCTAssertEqual(model.draft, "Explain this")
+        XCTAssertTrue(model.canRetrySubmission)
+    }
+
     func testMessageLessTerminalCompletesAfterDeltas() async throws {
         MockOllamaURLProtocol.handler = { request in
             if request.url?.path == "/api/show" { return (200, Data("{}".utf8)) }

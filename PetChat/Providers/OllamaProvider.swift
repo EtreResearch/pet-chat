@@ -128,7 +128,10 @@ final class OllamaProvider: ChatProvider, @unchecked Sendable {
         } else if !done {
             throw OllamaError.invalidStream
         }
-        if done { terminal = true }
+        if done {
+            guard event.doneReason == nil || event.doneReason == "stop" else { throw OllamaError.incompleteStream }
+            terminal = true
+        }
     }
 }
 
@@ -182,6 +185,9 @@ private struct ChatChunk: Decodable {
     let model: String?
     let message: Message?
     let done: Bool?
+    let doneReason: String?
+
+    enum CodingKeys: String, CodingKey { case model, message, done, doneReason = "done_reason" }
 
     struct Message: Decodable {
         let role: String?
