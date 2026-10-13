@@ -17,8 +17,8 @@ final class ChatAccessibilityTests: XCTestCase {
                                               attachments: attachments)
         let model = AppModel(coordinator: coordinator, defaults: UserDefaults(suiteName: UUID().uuidString)!)
         try model.select(providerID: .ollama, modelID: "test")
-        try model.attachImage(testPNG())
-        model.draft = "What is in this picture?"
+        model.draft = "Hello"
+        await model.submit()
         let hosting = NSHostingView(rootView: VStack(spacing: 0) {
             ChatPanelView(model: model, onClose: {}, onChangeModel: {})
             PetCharacterView()
@@ -34,10 +34,23 @@ final class ChatAccessibilityTests: XCTestCase {
         try await Task.sleep(for: .milliseconds(150))
         hosting.layoutSubtreeIfNeeded()
         hosting.displayIfNeeded()
-        let labels = accessibilityLabels(in: AXUIElementCreateApplication(getpid()))
-        for label in ["Pet", "Message", "Send", "Tell me more", "Close", "Capture area", "Paste image", "Attached image", "Remove image"] {
+        var labels = accessibilityLabels(in: AXUIElementCreateApplication(getpid()))
+        for label in ["Message", "Send", "Tell me more", "What can you help with?", "Copy", "Retry", "Close",
+                      "Capture area", "Paste image"] {
             XCTAssertTrue(labels.contains(label), "Missing accessible \(label): \(labels)")
         }
+        XCTAssertTrue(labels.contains { $0.contains("Pet") && $0.contains("Fixture reply") })
+
+        try model.attachImage(testPNG())
+        model.draft = "What is in this picture?"
+        try await Task.sleep(for: .milliseconds(150))
+        hosting.layoutSubtreeIfNeeded()
+        hosting.displayIfNeeded()
+        labels = accessibilityLabels(in: AXUIElementCreateApplication(getpid()))
+        for label in ["Attached image", "Remove image"] {
+            XCTAssertTrue(labels.contains(label), "Missing accessible \(label): \(labels)")
+        }
+        XCTAssertFalse(labels.contains("Tell me more"), "Suggestions hide while a draft is pending")
     }
 
     func testSetupExposesLoginConsentAndPrivacyExplanation() async throws {
@@ -165,9 +178,15 @@ final class ChatAccessibilityTests: XCTestCase {
 }
 
 private struct AccessibilityProvider: ChatProvider {
-    func availableModels() async throws -> [ProviderModel] { [] }
+    func availableModels() async throws -> [ProviderModel] {
+        [ProviderModel(id: "test", displayName: "Test", supportsImages: true, contextWindowTokens: 4096)]
+    }
     func stream(_ request: GenerationRequest) -> AsyncThrowingStream<GenerationEvent, Error> {
-        AsyncThrowingStream { $0.finish() }
+        AsyncThrowingStream { continuation in
+            continuation.yield(.textDelta("Fixture reply"))
+            continuation.yield(.completed)
+            continuation.finish()
+        }
     }
     func cancel(_ requestID: UUID) async {}
 }
