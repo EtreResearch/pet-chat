@@ -48,6 +48,7 @@ actor ChatGPTOAuthClient {
 
     func signOut() throws {
         cancelAuthentication()
+        try store.savePendingClientID(nil)
         if let accountID = try store.activeAccountID() { try store.delete(accountID: accountID) }
     }
 
@@ -69,12 +70,13 @@ actor ChatGPTOAuthClient {
               redirectURI.port != nil, redirectURI.user == nil, redirectURI.password == nil,
               redirectURI.query == nil, redirectURI.fragment == nil else { throw ChatGPTError.signInFailed }
         let hostID = try store.hostID()
+        let registeredClientID = try existing?.clientID ?? store.pendingClientID()
         let state = try Self.randomURLString()
         let nonce = try Self.randomURLString()
         let verifier = try Self.randomURLString(byteCount: 64)
         let challenge = Data(SHA256.hash(data: Data(verifier.utf8))).urlBase64
         var items = [
-            URLQueryItem(name: "client_id", value: existing?.clientID ?? "dynamic_agent_client"),
+            URLQueryItem(name: "client_id", value: registeredClientID ?? "dynamic_agent_client"),
             URLQueryItem(name: "ext_agent_host_id", value: hostID),
             URLQueryItem(name: "response_type", value: "code"),
             URLQueryItem(name: "redirect_uri", value: redirectURI.absoluteString),
@@ -88,7 +90,7 @@ actor ChatGPTOAuthClient {
         if let existing {
             items.append(URLQueryItem(name: "id_token_hint", value: existing.idToken))
             if let email = existing.email { items.append(URLQueryItem(name: "login_hint", value: email)) }
-        } else {
+        } else if registeredClientID == nil {
             items.append(URLQueryItem(name: "agent_name_hint", value: "Pet Chat"))
         }
         var authorization = URLComponents(string: Self.issuer + "/api/accounts/authorize")!
@@ -109,15 +111,18 @@ actor ChatGPTOAuthClient {
               query.filter({ $0.name == "client_id" }).count <= 1,
               let code = one("code"), !code.isEmpty else { throw ChatGPTError.signInFailed }
         let clientID: String
-        if let existing {
-            guard one("client_id") == nil || one("client_id") == existing.clientID else { throw ChatGPTError.signInFailed }
-            clientID = existing.clientID
+        if let registeredClientID {
+            guard one("client_id") == nil || one("client_id") == registeredClientID else { throw ChatGPTError.signInFailed }
+            clientID = registeredClientID
         } else {
             guard let issued = one("client_id"), issued.hasPrefix("oaiapp_"), issued != "dynamic_agent_client" else {
                 throw ChatGPTError.signInFailed
             }
             clientID = issued
         }
+        try Task.checkCancellation()
+        guard authorizationVersion == version, !isShuttingDown else { throw CancellationError() }
+        if existing == nil { try store.savePendingClientID(clientID) }
         let tokens = try await exchange([
             "grant_type": "authorization_code", "client_id": clientID, "code": code,
             "code_verifier": verifier, "redirect_uri": redirectURI.absoluteString, "resource": Self.resource
@@ -131,6 +136,7 @@ actor ChatGPTOAuthClient {
         guard authorizationVersion == version, !isShuttingDown else { throw CancellationError() }
         try store.save(credential, accountID: credential.accountID)
         try store.select(accountID: credential.accountID)
+        try store.savePendingClientID(nil)
         return credential
     }
 
@@ -218,6 +224,7 @@ actor ChatGPTOAuthClient {
         guard valid, let claims = try? JSONDecoder().decode(JWTClaims.self, from: payloadData),
               claims.iss == Self.issuer, claims.aud.contains(clientID),
               claims.aud.count == 1 || claims.azp == clientID,
+              claims.azp == nil || claims.azp == clientID,
               !claims.sub.isEmpty, claims.exp > Date().timeIntervalSince1970 - 5,
               claims.iat <= Date().timeIntervalSince1970 + 5,
               claims.exp > claims.iat,

@@ -61,6 +61,19 @@ final class KeychainCredentialStore: @unchecked Sendable {
         return id
     }
 
+    func pendingClientID() throws -> String? {
+        try Self.lock.withLock {
+            try read("pending-client-id").flatMap { String(data: $0, encoding: .utf8) }
+        }
+    }
+
+    func savePendingClientID(_ id: String?) throws {
+        try Self.lock.withLock {
+            if let id { try write(Data(id.utf8), key: "pending-client-id") }
+            else { try remove("pending-client-id") }
+        }
+    }
+
     private func query(_ key: String) -> [String: Any] {
         [kSecClass as String: kSecClassGenericPassword,
          kSecAttrService as String: service,

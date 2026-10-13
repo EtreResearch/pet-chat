@@ -24,6 +24,18 @@ final class ChatGPTOAuthClientTests: XCTestCase {
         XCTAssertTrue(fixture.exchangeWasChecked)
     }
 
+    func testFailedExchangeReusesRegistrationAfterClientRestart() async throws {
+        let fixture = OAuthFixture()
+        defer { fixture.cleanup() }
+        fixture.failExchange = true
+        do { _ = try await fixture.client.signIn(); XCTFail("Expected exchange failure") } catch {}
+        XCTAssertNil(try fixture.store.activeAccountID())
+        fixture.expectedClientID = "oaiapp_pet"
+        fixture.failExchange = false
+        let result = try await fixture.makeClient().signIn()
+        XCTAssertEqual(result.clientID, "oaiapp_pet")
+    }
+
     func testSignOutDeletesOnlyActiveAppCredentialAndStartsNoRequest() async throws {
         let fixture = OAuthFixture()
         defer { fixture.cleanup() }
@@ -245,7 +257,7 @@ final class ChatGPTOAuthClientTests: XCTestCase {
 
 private final class OAuthFixture: @unchecked Sendable {
     enum Rejection: String, CaseIterable {
-        case state, nonce, expired, audience, issuer, signature, unknownKid, scope, subject
+        case state, nonce, expired, audience, authorizedParty, issuer, signature, unknownKid, scope, subject
         case callbackClient, callbackURI, callbackDuplicateClient, callbackError, tokenRedirect, jwksRedirect
         case refreshScope, refreshSubject
     }
@@ -266,10 +278,13 @@ private final class OAuthFixture: @unchecked Sendable {
     let issuedSubject = "person-one"
     var authorizeWasChecked = false
     var exchangeWasChecked = false
+    var failExchange = false
+    var expectedClientID: String?
     lazy var oldCredential = ChatGPTCredential(subject: "person-one", clientID: "oaiapp_pet", hostID: try! store.hostID(),
         email: "first@example.test", idToken: "synthetic-old-id", accessToken: "synthetic-old-access",
         refreshToken: "synthetic-old-refresh", scopes: ["chatgpt.tokens.use.direct"], expiresAt: .distantPast)
-    lazy var client: ChatGPTOAuthClient = {
+    lazy var client: ChatGPTOAuthClient = makeClient()
+    func makeClient() -> ChatGPTOAuthClient {
         let config = URLSessionConfiguration.ephemeral
         config.protocolClasses = [FakeOAuthURLProtocol.self]
         FakeOAuthURLProtocol.handler = { [self] request in try self.respond(to: request) }
@@ -281,8 +296,9 @@ private final class OAuthFixture: @unchecked Sendable {
             XCTAssertEqual(url.path, "/api/accounts/authorize")
             let active = try store.activeAccountID()
             let firstRegistration = active == nil
-            XCTAssertEqual(value("client_id"), firstRegistration ? "dynamic_agent_client" : "oaiapp_pet")
-            XCTAssertEqual(value("agent_name_hint"), firstRegistration ? "Pet Chat" : nil)
+            let expected = expectedClientID ?? (firstRegistration ? "dynamic_agent_client" : "oaiapp_pet")
+            XCTAssertEqual(value("client_id"), expected)
+            XCTAssertEqual(value("agent_name_hint"), expected == "dynamic_agent_client" ? "Pet Chat" : nil)
             XCTAssertEqual(value("ext_agent_host_id"), try store.hostID())
             XCTAssertEqual(value("resource"), "https://api.openai.com/v1")
             XCTAssertEqual(value("scope"), "openid profile email offline_access resource.invoke chatgpt.tokens.use.direct")
@@ -299,7 +315,7 @@ private final class OAuthFixture: @unchecked Sendable {
             if rejection == .callbackError { callback.queryItems?.append(URLQueryItem(name: "error", value: "access_denied")) }
             return callback.url!
         })
-    }()
+    }
 
     init(rejection: Rejection? = nil, rsa: Bool = false, refreshDelay: Bool = false) {
         self.rejection = rejection
@@ -331,6 +347,7 @@ private final class OAuthFixture: @unchecked Sendable {
             return (200, try JSONSerialization.data(withJSONObject: ["keys": [jwk]]))
         }
         XCTAssertEqual(request.url?.path, "/api/accounts/oauth/token")
+        if failExchange { return (503, Data()) }
         if rejection == .tokenRedirect { return (302, Data()) }
         let body = String(data: request.testBody, encoding: .utf8) ?? ""
         let form = URLComponents(string: "?\(body)")!.queryItems ?? []
@@ -366,6 +383,7 @@ private final class OAuthFixture: @unchecked Sendable {
                                      "exp": rejection == .expired ? 1 : Int(Date().timeIntervalSince1970) + 3600,
                                      "iat": Int(Date().timeIntervalSince1970)]
         if let nonce { claims["nonce"] = rejection == .nonce ? "wrong" : nonce }
+        if rejection == .authorizedParty { claims["azp"] = "oaiapp_other" }
         let message = try JSONSerialization.data(withJSONObject: header).urlBase64 + "." + JSONSerialization.data(withJSONObject: claims).urlBase64
         let signature: String
         if let rsaKey {

@@ -89,7 +89,9 @@ final class LoopbackOAuthCallbackSession: OAuthCallbackSession, @unchecked Senda
                 close(peer)
             }
         }
-        guard fcntl(peer, F_SETFL, O_NONBLOCK) == 0 else { throw ChatGPTError.signInFailed }
+        var noSigPipe: Int32 = 1
+        guard setsockopt(peer, SOL_SOCKET, SO_NOSIGPIPE, &noSigPipe, socklen_t(MemoryLayout<Int32>.size)) == 0,
+              fcntl(peer, F_SETFL, O_NONBLOCK) == 0 else { throw ChatGPTError.signInFailed }
         var request = Data()
         var bytes = [UInt8](repeating: 0, count: 1024)
         let deadline = DispatchTime.now().uptimeNanoseconds + UInt64(max(0, headerReadTimeout) * 1_000_000_000)
