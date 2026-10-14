@@ -6,5 +6,10 @@ struct PetChatApp: App {
 
     var body: some Scene {
         Settings { EmptyView() }
+            .commands {
+                CommandGroup(replacing: .appSettings) {
+                    Button("Settings…") { appDelegate.showSettings() }.keyboardShortcut(",")
+                }
+            }
     }
 }

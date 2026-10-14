@@ -6,14 +6,16 @@ import ServiceManagement
 struct SettingsView: View {
     let shortcutController: GlobalShortcutController
     let panelController: PetPanelController
+    let dockPreference: DockPreference
     @State private var shortcut: Shortcut
     @State private var error: String?
     @State private var displayID: CGDirectDisplayID
     @State private var displays: [PetDisplay]
 
-    init(shortcutController: GlobalShortcutController, panelController: PetPanelController, initialError: String? = nil) {
+    init(shortcutController: GlobalShortcutController, panelController: PetPanelController, dockPreference: DockPreference, initialError: String? = nil) {
         self.shortcutController = shortcutController
         self.panelController = panelController
+        self.dockPreference = dockPreference
         _shortcut = State(initialValue: shortcutController.shortcut ?? GlobalShortcutController.savedShortcut())
         _error = State(initialValue: initialError)
         _displayID = State(initialValue: panelController.selectedDisplayID ?? 0)
@@ -24,6 +26,16 @@ struct SettingsView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
                 LoginItemControl(controller: panelController.model.loginItemController)
+                Toggle("Show in Dock", isOn: Binding(get: { dockPreference.showInDock }, set: { show in
+                    let window = NSApp.keyWindow
+                    dockPreference.setShowInDock(show)
+                    // Changing the activation policy can deactivate the app and bury this window.
+                    DispatchQueue.main.async {
+                        NSApp.activate(ignoringOtherApps: true)
+                        window?.makeKeyAndOrderFront(nil)
+                    }
+                }))
+                .accessibilityLabel("Show in Dock")
                 Divider()
                 HStack {
                     Text("Open chat")

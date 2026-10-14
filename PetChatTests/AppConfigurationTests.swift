@@ -6,7 +6,7 @@ final class AppConfigurationTests: XCTestCase {
         XCTAssertFalse(purpose?.isEmpty ?? true)
     }
 
-    func testRunsAsAccessoryApp() {
-        XCTAssertEqual(Bundle.main.object(forInfoDictionaryKey: "LSUIElement") as? Bool, true)
+    func testShowsInDockByDefault() {
+        XCTAssertNil(Bundle.main.object(forInfoDictionaryKey: "LSUIElement"))
     }
 }

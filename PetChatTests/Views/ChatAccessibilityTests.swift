@@ -74,7 +74,7 @@ final class ChatAccessibilityTests: XCTestCase {
             fullScreenProvider: { _ in false })
         defer { panel.hidePet() }
         let shortcuts = GlobalShortcutController(defaults: UserDefaults(suiteName: UUID().uuidString)!, onSummon: {})
-        let host = NSHostingView(rootView: SettingsView(shortcutController: shortcuts, panelController: panel))
+        let host = NSHostingView(rootView: SettingsView(shortcutController: shortcuts, panelController: panel, dockPreference: DockPreference(defaults: UserDefaults(suiteName: "SettingsViewTests-\(UUID())")!, setPolicy: { _ in })))
         host.frame = CGRect(x: 0, y: 0, width: 440, height: 620)
         let window = show(host)
         defer { window.contentView = nil; window.close() }

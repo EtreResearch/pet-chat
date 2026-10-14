@@ -7,6 +7,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var shortcutController: GlobalShortcutController?
     private var menuBarController: MenuBarController?
     private var model: AppModel?
+    private var dockPreference: DockPreference?
     private var settingsWindow: NSWindow?
     private var shortcutRegistrationError: String?
 
@@ -33,7 +34,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             } catch { preconditionFailure("UI fixture could not start: \(error)") }
             return
         }
-        if NSClassFromString("XCTestCase") != nil { return }
+        if NSClassFromString("XCTestCase") != nil {
+            // Unit tests rely on the host app activating itself; a regular-policy host launched in the background does not.
+            NSApp.setActivationPolicy(.accessory)
+            return
+        }
         #endif
         do {
             let attachments = AttachmentStore()
@@ -56,6 +61,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                       fullScreenProvider: @escaping (CGDirectDisplayID?) -> Bool = { PetPanelController.hasFullScreenWindow(on: $0) }) {
         guard panelController == nil else { return }
         self.model = model
+        let dock = DockPreference(defaults: defaults)
+        dockPreference = dock
+        dock.apply()
         let panel = PetPanelController(model: model, defaults: defaults, fullScreenProvider: fullScreenProvider)
         panelController = panel
         let shortcut = GlobalShortcutController(defaults: defaults, onSummon: { [weak panel] in panel?.showChat() })
@@ -68,8 +76,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if shortcutRegistrationError != nil { showSettings() }
     }
 
-    private func showSettings() {
-        guard let shortcutController, let panelController else { return }
+    func showSettings() {
+        guard let shortcutController, let panelController, let dockPreference else { return }
         if settingsWindow == nil {
             let window = NSWindow(contentRect: CGRect(x: 0, y: 0, width: 440, height: 620),
                                   styleMask: [.titled, .closable], backing: .buffered, defer: false)
@@ -77,12 +85,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             window.title = "Pet Chat Settings"
             window.contentView = NSHostingView(rootView: SettingsView(shortcutController: shortcutController,
                                                                       panelController: panelController,
+                                                                      dockPreference: dockPreference,
                                                                       initialError: shortcutRegistrationError))
             window.center()
             settingsWindow = window
         }
         NSApp.activate(ignoringOtherApps: true)
         settingsWindow?.makeKeyAndOrderFront(nil)
+    }
+
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        panelController?.showChat()   // also re-shows a hidden pet
+        return true
     }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
