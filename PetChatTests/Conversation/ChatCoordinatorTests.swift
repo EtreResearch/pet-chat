@@ -101,7 +101,7 @@ final class ChatCoordinatorTests: XCTestCase {
         XCTAssertEqual(restored.threads.first?.messages.last?.text, "unfinished")
     }
 
-    func testRestartRestoresFailedQuestionAndImageForRetry() async throws {
+    func testRestartRetriesFailedTurnWithItsImage() async throws {
         let fixture = try Fixture()
         fixture.provider.events = [.textDelta("Partial")]
         fixture.provider.failure = TestFailure.disconnected
@@ -111,16 +111,17 @@ final class ChatCoordinatorTests: XCTestCase {
         let restored = try ChatCoordinator(providers: [.ollama: fixture.provider], store: fixture.store,
                                            attachments: fixture.attachments)
         let model = AppModel(coordinator: restored, defaults: fixture.defaults)
-        XCTAssertEqual(model.draft, "Explain this")
-        XCTAssertEqual(model.attachmentIDs, [image])
+        XCTAssertEqual(model.draft, "")
+        XCTAssertEqual(model.attachmentIDs, [])
         XCTAssertNotNil(model.errorMessage)
         await model.loadModels(for: .ollama)
         XCTAssertNotNil(model.errorMessage)
         XCTAssertTrue(model.canRetrySubmission)
         fixture.provider.failure = nil
         fixture.provider.events = [.textDelta("Complete"), .completed]
-        await model.submit()
+        await model.retry()
         XCTAssertEqual(model.thread?.messages.map(\.text), ["Explain this", "Complete"])
+        XCTAssertEqual(model.thread?.messages.first?.attachmentIDs, [image])
         XCTAssertEqual(fixture.provider.requests.last?.imageData, [image: testPNG()])
     }
 
@@ -143,7 +144,7 @@ final class ChatCoordinatorTests: XCTestCase {
         }
     }
 
-    func testAppModelKeepsDraftAndAttachmentAfterProviderError() async throws {
+    func testAppModelProviderErrorKeepsSentTurnAndImageOutOfDraft() async throws {
         let fixture = try Fixture()
         fixture.provider.failure = TestFailure.disconnected
         let model = AppModel(coordinator: fixture.coordinator, auth: fixture.auth, defaults: fixture.defaults)
@@ -155,8 +156,10 @@ final class ChatCoordinatorTests: XCTestCase {
 
         await model.submit()
 
-        XCTAssertEqual(model.draft, "What is this?")
-        XCTAssertEqual(model.attachmentIDs, [image])
+        XCTAssertEqual(model.draft, "")
+        XCTAssertEqual(model.attachmentIDs, [])
+        XCTAssertEqual(model.thread?.messages.first?.text, "What is this?")
+        XCTAssertEqual(model.thread?.messages.first?.attachmentIDs, [image])
         XCTAssertNotNil(model.errorMessage)
         XCTAssertEqual(try fixture.attachments.load(image, threadID: thread.id), testPNG(1))
     }
@@ -186,6 +189,8 @@ final class ChatCoordinatorTests: XCTestCase {
         await model.submit()
         fixture.provider.events = [.textDelta("Working"), .completed]
         fixture.provider.failure = nil
+        XCTAssertEqual(model.draft, "")
+        model.draft = "Question"
 
         await model.submit()
 
@@ -509,7 +514,7 @@ final class ChatCoordinatorTests: XCTestCase {
         XCTAssertEqual(fixture.otherProvider.modelDiscoveryCount, 0)
     }
 
-    func testShutdownStopsStreamingAndPreservesDraftHistoryAndProvider() async throws {
+    func testShutdownStopsStreamingAndPreservesHistoryAndProvider() async throws {
         let fixture = try Fixture()
         fixture.otherProvider.holdOpen = true
         fixture.otherProvider.events = [.textDelta("Partial")]
@@ -524,7 +529,8 @@ final class ChatCoordinatorTests: XCTestCase {
         await submission.value
         XCTAssertFalse(model.isLoading)
         XCTAssertTrue(fixture.otherProvider.cancelled)
-        XCTAssertEqual(model.draft, "Keep my question")
+        XCTAssertEqual(model.draft, "")
+        XCTAssertEqual(model.thread?.messages.first?.text, "Keep my question")
         XCTAssertEqual(model.thread?.providerID, .chatGPT)
         XCTAssertEqual(model.thread?.messages.last?.status, .stopped)
         XCTAssertEqual(try fixture.store.load().last?.messages.last?.status, .stopped)
@@ -657,7 +663,8 @@ final class ChatCoordinatorTests: XCTestCase {
         await signOut.value
         await submission.value
         XCTAssertFalse(model.isSigningOutChatGPT)
-        XCTAssertEqual(model.draft, "Keep question")
+        XCTAssertEqual(model.draft, "")
+        XCTAssertEqual(model.thread?.messages.first?.text, "Keep question")
         XCTAssertEqual(model.thread?.messages.last?.status, .stopped)
         XCTAssertTrue(model.errorMessage?.contains("remote revocation") == true)
     }
@@ -848,13 +855,13 @@ final class ChatCoordinatorTests: XCTestCase {
         try model.attachImage(testPNG())
         let image = try XCTUnwrap(model.attachmentIDs.first)
         await model.submit()
-        XCTAssertEqual(model.attachmentIDs, [image])
+        XCTAssertEqual(model.attachmentIDs, [])
         try model.removeAttachment(image)
         XCTAssertEqual(model.thread?.messages.first?.attachmentIDs, [image])
         XCTAssertEqual(try fixture.attachments.load(image, threadID: model.currentThreadID!), testPNG())
     }
 
-    func testImagesClearOnlyAfterSuccessAndNeverResendOnNextTurn() async throws {
+    func testSentImagesNeverResendOnNextTurn() async throws {
         let fixture = try Fixture()
         let model = AppModel(coordinator: fixture.coordinator, auth: fixture.auth, defaults: fixture.defaults)
         try model.select(providerID: .ollama, modelID: "text")
@@ -996,6 +1003,205 @@ final class ChatCoordinatorTests: XCTestCase {
             .appendingPathComponent(".pending-deletion").appendingPathComponent(thread.id.uuidString)
             .appendingPathComponent(image.uuidString).path))
     }
+
+    // MARK: Draft clears on send
+
+    func testSubmitEmptiesDraftImmediately() async throws {
+        let fixture = try Fixture()
+        let started = expectation(description: "model discovery started")
+        fixture.provider.holdModels = true
+        fixture.provider.onModels = { started.fulfill() }
+        let model = AppModel(coordinator: fixture.coordinator, auth: fixture.auth, defaults: fixture.defaults)
+        try model.select(providerID: .ollama, modelID: "text")
+        model.draft = "Hello"
+        try model.attachImage(testPNG())
+        let image = try XCTUnwrap(model.attachmentIDs.first)
+        let send = Task { await model.submit() }
+        await fulfillment(of: [started], timeout: 2)
+
+        XCTAssertTrue(model.isLoading)
+        XCTAssertEqual(model.draft, "")
+        XCTAssertEqual(model.attachmentIDs, [])
+        fixture.provider.modelsGate?.resume()
+        await send.value
+        XCTAssertEqual(model.draft, "")
+        XCTAssertEqual(model.attachmentIDs, [])
+        XCTAssertEqual(model.thread?.messages.first?.attachmentIDs, [image])
+    }
+
+    func testPreRecordFailureRestoresDraft() async throws {
+        let fixture = try Fixture()
+        fixture.provider.modelsFailure = TestFailure.disconnected
+        let model = AppModel(coordinator: fixture.coordinator, auth: fixture.auth, defaults: fixture.defaults)
+        try model.select(providerID: .ollama, modelID: "text")
+        model.draft = "Hello"
+        try model.attachImage(testPNG())
+        let image = try XCTUnwrap(model.attachmentIDs.first)
+
+        await model.submit()
+
+        XCTAssertEqual(model.draft, "Hello")
+        XCTAssertEqual(model.attachmentIDs, [image])
+        XCTAssertNotNil(model.errorMessage)
+        XCTAssertTrue(model.canRetrySubmission)
+        XCTAssertEqual(model.thread?.messages, [])
+        fixture.provider.modelsFailure = nil
+        fixture.provider.events = [.textDelta("Hi"), .completed]
+
+        await model.retry()
+
+        XCTAssertEqual(model.thread?.messages.map(\.text), ["Hello", "Hi"])
+        XCTAssertEqual(fixture.provider.requests.last?.imageData, [image: testPNG()])
+        XCTAssertEqual(model.draft, "")
+        XCTAssertEqual(model.attachmentIDs, [])
+        XCTAssertNil(model.errorMessage)
+    }
+
+    func testPreRecordFailureDoesNotOverwriteNewDraft() async throws {
+        let fixture = try Fixture()
+        let started = expectation(description: "model discovery started")
+        fixture.provider.holdModels = true
+        fixture.provider.onModels = { started.fulfill() }
+        fixture.provider.modelsFailure = TestFailure.disconnected
+        let model = AppModel(coordinator: fixture.coordinator, auth: fixture.auth, defaults: fixture.defaults)
+        try model.select(providerID: .ollama, modelID: "text")
+        model.draft = "Hello"
+        let send = Task { await model.submit() }
+        await fulfillment(of: [started], timeout: 2)
+        model.draft = "new"
+
+        fixture.provider.modelsGate?.resume()
+        await send.value
+
+        XCTAssertEqual(model.draft, "new")
+        XCTAssertEqual(model.attachmentIDs, [])
+        XCTAssertNotNil(model.errorMessage)
+        XCTAssertFalse(model.canRetrySubmission)
+        XCTAssertEqual(model.thread?.messages, [])
+    }
+
+    func testStopBeforeTurnRecordedRestoresDraft() async throws {
+        let fixture = try Fixture()
+        let started = expectation(description: "model discovery started")
+        fixture.provider.holdModels = true
+        fixture.provider.onModels = { started.fulfill() }
+        let model = AppModel(coordinator: fixture.coordinator, auth: fixture.auth, defaults: fixture.defaults)
+        try model.select(providerID: .ollama, modelID: "text")
+        model.draft = "Hello"
+        try model.attachImage(testPNG())
+        let image = try XCTUnwrap(model.attachmentIDs.first)
+        let send = Task { await model.submit() }
+        await fulfillment(of: [started], timeout: 2)
+
+        await model.stop()
+
+        XCTAssertFalse(model.isLoading)
+        XCTAssertEqual(model.draft, "Hello")
+        XCTAssertEqual(model.attachmentIDs, [image])
+        XCTAssertNil(model.errorMessage)
+        fixture.provider.modelsGate?.resume()
+        await send.value
+        XCTAssertEqual(model.draft, "Hello")
+        XCTAssertEqual(model.attachmentIDs, [image])
+        XCTAssertNil(model.errorMessage)
+        XCTAssertEqual(model.thread?.messages, [])
+        XCTAssertTrue(fixture.provider.requests.isEmpty)
+    }
+
+    func testPostRecordFailureLeavesDraftEmptyAndRetryRegenerates() async throws {
+        let fixture = try Fixture()
+        fixture.provider.events = [.textDelta("Part")]
+        fixture.provider.failure = TestFailure.disconnected
+        let model = AppModel(coordinator: fixture.coordinator, auth: fixture.auth, defaults: fixture.defaults)
+        try model.select(providerID: .ollama, modelID: "text")
+        model.draft = "Hello"
+
+        await model.submit()
+
+        XCTAssertEqual(model.draft, "")
+        XCTAssertEqual(model.attachmentIDs, [])
+        XCTAssertNotNil(model.errorMessage)
+        XCTAssertTrue(model.canRetrySubmission)
+        XCTAssertEqual(model.thread?.messages.map(\.role), [.user, .pet])
+        XCTAssertEqual(model.thread?.messages.last?.status, .failed)
+        let failedReplyID = model.thread?.messages.last?.id
+        fixture.provider.failure = nil
+        fixture.provider.events = [.textDelta("Full"), .completed]
+
+        await model.retry()
+
+        XCTAssertEqual(model.thread?.messages.map(\.text), ["Hello", "Full"])
+        XCTAssertNotEqual(model.thread?.messages.last?.id, failedReplyID)
+        XCTAssertEqual(model.thread?.messages.last?.status, .complete)
+        XCTAssertEqual(model.draft, "")
+        XCTAssertNil(model.errorMessage)
+    }
+
+    func testResendAfterFailedTurnThatFailsAgainLeavesDraftEmpty() async throws {
+        let fixture = try Fixture()
+        fixture.provider.events = [.textDelta("Part")]
+        fixture.provider.failure = TestFailure.disconnected
+        let model = AppModel(coordinator: fixture.coordinator, auth: fixture.auth, defaults: fixture.defaults)
+        try model.select(providerID: .ollama, modelID: "text")
+        model.draft = "Hello"
+        await model.submit()
+        XCTAssertEqual(model.thread?.messages.count, 2)
+        model.draft = "Hello"
+
+        await model.submit()
+
+        XCTAssertEqual(model.thread?.messages.map(\.text), ["Hello", "Part"])
+        XCTAssertEqual(model.thread?.messages.last?.status, .failed)
+        XCTAssertEqual(fixture.provider.requests.count, 2)
+        XCTAssertEqual(model.draft, "")
+        XCTAssertNotNil(model.errorMessage)
+        XCTAssertTrue(model.canRetrySubmission)
+    }
+
+    func testRelaunchWithFailedTurnKeepsDraftEmptyAndOffersRegenerate() throws {
+        let fixture = try Fixture()
+        let image = UUID()
+        try fixture.store.save(ChatThread(providerID: .ollama, modelID: "text", messages: [
+            ChatMessage(role: .user, text: "Explain this", attachmentIDs: [image]),
+            ChatMessage(role: .pet, text: "Partial", status: .failed),
+        ]))
+        let coordinator = try ChatCoordinator(providers: [.ollama: fixture.provider], store: fixture.store,
+                                              attachments: fixture.attachments)
+
+        let model = AppModel(coordinator: coordinator, auth: fixture.auth, defaults: fixture.defaults)
+
+        XCTAssertEqual(model.draft, "")
+        XCTAssertEqual(model.attachmentIDs, [])
+        XCTAssertNotNil(model.errorMessage)
+        XCTAssertTrue(model.canRetrySubmission)
+        XCTAssertTrue(model.canRegenerate)
+    }
+
+    func testChipFailureBeforeRecordLeavesDraftEmpty() async throws {
+        let fixture = try Fixture()
+        let model = AppModel(coordinator: fixture.coordinator, auth: fixture.auth, defaults: fixture.defaults)
+        try model.select(providerID: .ollama, modelID: "text")
+        fixture.provider.modelsFailure = TestFailure.disconnected
+
+        await model.sendSuggestion("What can you help with?")
+
+        XCTAssertEqual(model.draft, "")
+        XCTAssertNotNil(model.errorMessage)
+        XCTAssertFalse(model.canRetrySubmission)
+        XCTAssertEqual(model.thread?.messages, [])
+        fixture.provider.modelsFailure = nil
+        model.draft = "Why?"
+        await model.submit()
+        XCTAssertTrue(model.canTellMeMore)
+        fixture.provider.modelsFailure = TestFailure.disconnected
+
+        await model.tellMeMore()
+
+        XCTAssertEqual(model.draft, "")
+        XCTAssertNotNil(model.errorMessage)
+        XCTAssertFalse(model.canRetrySubmission)
+        XCTAssertEqual(model.thread?.messages.count, 2)
+    }
 }
 
 @MainActor private final class AuthGate {
@@ -1059,6 +1265,7 @@ private final class ScriptedProvider: ChatProvider, @unchecked Sendable {
     var modelDiscoveryCount = 0
     var cancelled = false
     var supportsImages = true
+    var modelsFailure: Error?
     var contextWindowTokens = 4096
 
     init(id: ProviderID) { providerID = id }
@@ -1071,6 +1278,7 @@ private final class ScriptedProvider: ChatProvider, @unchecked Sendable {
             }
         }
         modelDiscoveryWasCancelled = Task.isCancelled
+        if let modelsFailure { throw modelsFailure }
         return [ProviderModel(id: providerID == .ollama ? "text" : "gpt", displayName: "Test", supportsImages: supportsImages, contextWindowTokens: contextWindowTokens)]
     }
     func stream(_ request: GenerationRequest) -> AsyncThrowingStream<GenerationEvent, Error> {

@@ -169,7 +169,7 @@ final class PetPanelTests: XCTestCase {
                                        displayProvider: { displays }, fullScreenProvider: { _ in false })
         defer { panel.hidePet() }
         let shortcut = GlobalShortcutController(defaults: defaults, onSummon: {})
-        let host = NSHostingView(rootView: SettingsView(shortcutController: shortcut, panelController: panel))
+        let host = NSHostingView(rootView: SettingsView(shortcutController: shortcut, panelController: panel, dockPreference: DockPreference(defaults: UserDefaults(suiteName: "SettingsViewTests-\(UUID())")!, setPolicy: { _ in })))
         host.frame = CGRect(x: 0, y: 0, width: 440, height: 230)
         let window = NSWindow(contentRect: host.frame, styleMask: .titled, backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false

@@ -1,64 +1,61 @@
 # Pet Chat
 
-A little cat that lives in the corner of your Mac's screen. Click it, ask a question, and get a short answer without leaving what you're doing.
+A little cat that sits in the corner of your Mac's screen. Click it, ask a question, get a short answer, and keep working.
 
-<p align="center"><img src="docs/images/chat.png" width="380" alt="Pet Chat answering 'Why is the sky blue?' with the cat below the chat panel"></p>
+<p align="center"><img src="docs/images/chat.png" width="400" alt="Pet Chat answering 'Why is the sky blue?', with the cat below the chat"></p>
 
 ## What you need
 
-- A Mac running macOS 14 or newer, with Xcode installed (to build the app).
-- An AI to talk to. Pick one:
-  - **Ollama** (free, runs on your Mac, private). Install it from [ollama.com](https://ollama.com) and download a model, for example `ollama pull gemma3`.
-  - **ChatGPT** (uses your ChatGPT account; no API key needed). Your account must be eligible; see [OpenAI's guide](https://developers.openai.com/siwc/token-sharing-open-source).
+- A Mac with macOS 14 or newer.
+- An AI to answer you. Pick one:
+  - **Ollama**: free, private, and runs on your Mac. Install it from [ollama.com](https://ollama.com), then download a model, for example `ollama pull gemma3`.
+  - **ChatGPT**: uses your ChatGPT account, no API key needed. Your account must be eligible; see [OpenAI's guide](https://developers.openai.com/siwc/token-sharing-open-source).
 
 ## Install
 
-In Terminal, from this folder:
+1. Download the latest `PetChat-<version>.dmg` from [Releases](https://github.com/EtreResearch/pet-chat/releases/latest).
+2. Open it and drag **Pet Chat** into **Applications**.
+3. Open **Pet Chat** from Applications.
+4. The first time, macOS warns that it can't check the app. Click **Done** (or **OK**). Then go to **System Settings → Privacy & Security**, scroll down, click **Open Anyway** and enter your password. You only do this once, because Pet Chat isn't signed by Apple yet.
 
-```sh
-xcodebuild build -project PetChat.xcodeproj -scheme PetChat -configuration Release -destination 'platform=macOS' -derivedDataPath /private/tmp/pet-chat-release CODE_SIGN_IDENTITY=- CODE_SIGNING_ALLOWED=YES
-mkdir -p build && ditto /private/tmp/pet-chat-release/Build/Products/Release/PetChat.app build/PetChat.app
-open build/PetChat.app
-```
-
-The cat appears in the bottom-right corner, and a cat icon appears in the menu bar. There is no Dock icon.
+**To update**, download the new version and replace the old app in Applications. If you use ChatGPT, macOS may ask about the keychain once; click **Always Allow**.
 
 ## Use it
 
-1. **Click the cat** or press **Control + Option + Space** from any app.
-2. The first time, choose who answers you, then click **Start chatting**:
+1. Click the cat or the Dock icon, or press **Control + Option + Space**.
+2. The first time, pick who answers you and click **Start chatting**.
 
-   <img src="docs/images/setup.png" width="320" alt="Choosing Ollama and a model">
+   <img src="docs/images/setup.png" width="320" alt="Choosing Ollama and the gemma4 model">
 
-   - For **Ollama**, choose a model (click **Refresh models** if the list is empty).
-   - For **ChatGPT**, click **Connect ChatGPT** and approve the sign-in in your browser.
-3. Type your question and press **Send** (or **Command + Return**).
-4. Want a longer answer? Click **Tell me more**.
-5. Press **Escape** or **Close** to tuck the chat away. Your unsent text stays.
+3. Type a question and press **Return**. Use **Shift + Return** for a new line.
 
-### Handy extras
-
-- **Show the AI something on screen:** click **Capture area** and drag over part of your screen, or copy a picture and click **Paste image**. Nothing is sent until you press **Send**. The first capture asks for Screen Recording permission.
-- **Stop** cuts an answer short. **Retry** tries again if something failed.
-- **Chat menu:** start a **New Chat**, **Change model**, or **Delete Chat**.
-- **Move the cat** by dragging it.
-- **Menu-bar cat:** hide or show the pet, open **Settings** (change the shortcut, pick a screen, make the text bigger, sign out of ChatGPT, launch at login), or **Quit**.
+Also:
+- **Tell me more** gives a longer answer. **Copy** and **Retry** sit under each answer.
+- **Capture area** or **Paste image** lets you show Pet something on your screen.
+- The **Chat** menu starts a new chat, changes the model, or deletes the chat.
+- **Settings** (Command + , or the menu-bar cat): shortcut, screen, text size, launch at login, and **Show in Dock**.
 
 ## Privacy
 
-- Your chats and images are stored only on your Mac, in `~/Library/Application Support/PetChat`. They are not encrypted.
+- Chats stay on your Mac, in `~/Library/Application Support/PetChat`. They are not encrypted.
 - With Ollama, nothing leaves your Mac.
-- With ChatGPT, your question, recent messages from the same chat, and any attached image go to OpenAI when you press **Send**. Your ChatGPT login is kept in the macOS Keychain.
-- **Sign out of ChatGPT** stops requests, attempts to end the remote session, and removes local tokens. The app keeps the account's registration for later sign-in. If remote revocation cannot be confirmed, Settings shows a warning to disconnect the app in ChatGPT Settings.
+- With ChatGPT, your question, recent messages in that chat, and any image go to OpenAI when you send. Your login is kept in the macOS Keychain, and **Sign out of ChatGPT** in Settings removes it.
 
 ## For developers
 
-Swift 6, SwiftUI/AppKit and SwiftData. The project has no third-party dependencies. Run the tests (161 unit and UI tests, all passing as of 2026-10-13):
+Swift 6, SwiftUI/AppKit and SwiftData. No third-party dependencies. You need Xcode.
 
 ```sh
+# Run the tests
 xcodebuild test -project PetChat.xcodeproj -scheme PetChat -destination 'platform=macOS' -parallel-testing-enabled NO CODE_SIGN_IDENTITY=- CODE_SIGNING_ALLOWED=YES
+
+# Build a DMG into dist/
+scripts/make-dmg.sh 0.1.0
+
+# Release: the workflow tests, builds the DMG and creates a draft release to publish
+git tag v0.1.0 && git push origin v0.1.0
 ```
 
-The built app is ad-hoc signed for your own Mac only. It is not notarized for sharing. The design is in [`docs/superpowers/specs`](docs/superpowers/specs/2026-10-11-macos-pet-chat-design.md). The screenshots are rendered from the app's own views, with a real answer from a local Ollama model.
+The design is in [`docs/superpowers/specs`](docs/superpowers/specs/). Screenshots are rendered from the app's own views with a real answer from a local Ollama model.
 
 Not yet checked by hand: live ChatGPT sign-in, VoiceOver, multiple displays and full-screen apps, real screen capture, Login Items approval, and macOS 14.

@@ -155,7 +155,7 @@ final class OpenAIPlanProviderTests: XCTestCase {
     }
 
     @MainActor
-    func testInvalidTerminalKeepsPartialTranscriptFailedAndDraftRetryable() async throws {
+    func testInvalidTerminalKeepsPartialTranscriptFailedAndTurnRetryable() async throws {
         for terminal in [#"{"type":"response.completed","sequence_number":2}"#,
                          #"{"type":"response.completed","sequence_number":2,"response":{"id":"resp_test","object":"response","status":"completed","error":null,"output":[{"type":"message"}]}}"#] {
             try await withAppModel(events: [Self.created, Self.delta("partial", sequence: 1), terminal]) { model, store in
@@ -164,8 +164,10 @@ final class OpenAIPlanProviderTests: XCTestCase {
                 XCTAssertEqual(model.thread?.messages.last?.text, "partial")
                 XCTAssertEqual(model.thread?.messages.last?.status, .failed)
                 XCTAssertEqual(try store.load().first?.messages.last?.status, .failed)
-                XCTAssertEqual(model.draft, "Keep my question")
+                XCTAssertEqual(model.thread?.messages.first?.text, "Keep my question")
+                XCTAssertEqual(model.draft, "")
                 XCTAssertNotNil(model.errorMessage)
+                XCTAssertTrue(model.canRetrySubmission)
                 XCTAssertFalse(model.isLoading)
             }
         }
