@@ -25,7 +25,7 @@ codesign --verify --deep --strict "$app"
 built="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$app/Contents/Info.plist")"
 [[ "$built" == "$version" ]] || { echo "expected CFBundleShortVersionString $version, got: $built" >&2; exit 1; }
 
-ditto "$app" "$stage/PetChat.app"
+ditto "$app" "$stage/Pet Chat.app"
 ln -s /Applications "$stage/Applications"
 hdiutil create -volname "Pet Chat" -srcfolder "$stage" -fs HFS+ -format UDZO "$out" >/dev/null
 hdiutil verify "$out" >/dev/null

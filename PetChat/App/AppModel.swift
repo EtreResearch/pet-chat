@@ -221,7 +221,7 @@ final class AppModel {
     private func send(text: String, images: [UUID], restoresDraft: Bool) async {
         let pending = PendingSend(text: text, images: images, restoresDraft: restoresDraft,
                                   lastMessageID: thread?.messages.last?.id)
-        _ = await generate(.submit, pending: pending) { [coordinator] id in
+        await generate(.submit, pending: pending) { [coordinator] id in
             try await coordinator.send(text: text, attachmentIDs: images, threadID: id)
         }
     }
@@ -245,7 +245,7 @@ final class AppModel {
 
     func regenerateLastReply() async {
         guard canRegenerate else { return }
-        _ = await generate(.regenerate) { [coordinator] id in try await coordinator.regenerateLastReply(threadID: id) }
+        await generate(.regenerate) { [coordinator] id in try await coordinator.regenerateLastReply(threadID: id) }
     }
 
     /// Error-bar Retry: re-runs whichever generation failed, so a failed regenerate never sends the composer draft.
@@ -256,12 +256,11 @@ final class AppModel {
         }
     }
 
-    /// Runs one generation in the current chat. Returns true when it finished without error and is still the
-    /// active submission for the same chat.
+    /// Runs one generation in the current chat.
     private func generate(_ kind: Generation, pending: PendingSend? = nil,
-                          _ work: @escaping @MainActor @Sendable (UUID) async throws -> Void) async -> Bool {
-        guard !isShuttingDown, let id = currentThreadID, !isLoading else { return false }
-        guard selectedProviderID != .chatGPT || !isSigningOutChatGPT else { return false }
+                          _ work: @escaping @MainActor @Sendable (UUID) async throws -> Void) async {
+        guard !isShuttingDown, let id = currentThreadID, !isLoading else { return }
+        guard selectedProviderID != .chatGPT || !isSigningOutChatGPT else { return }
         if let pending, pending.restoresDraft {
             draft = ""
             attachmentIDs = []
@@ -284,7 +283,6 @@ final class AppModel {
         }
         do {
             try await withTaskCancellationHandler { try await task.value } onCancel: { task.cancel() }
-            return activeSubmissionID == submissionID && currentThreadID == id
         } catch {
             if activeSubmissionID == submissionID {
                 errorMessage = error.localizedDescription
@@ -292,7 +290,6 @@ final class AppModel {
                 failedGeneration = kind
                 settlePendingSend()
             }
-            return false
         }
     }
 

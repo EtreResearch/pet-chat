@@ -861,7 +861,7 @@ final class ChatCoordinatorTests: XCTestCase {
         XCTAssertEqual(try fixture.attachments.load(image, threadID: model.currentThreadID!), testPNG())
     }
 
-    func testImagesClearOnlyAfterSuccessAndNeverResendOnNextTurn() async throws {
+    func testSentImagesNeverResendOnNextTurn() async throws {
         let fixture = try Fixture()
         let model = AppModel(coordinator: fixture.coordinator, auth: fixture.auth, defaults: fixture.defaults)
         try model.select(providerID: .ollama, modelID: "text")

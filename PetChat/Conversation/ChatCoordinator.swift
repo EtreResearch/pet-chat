@@ -154,7 +154,7 @@ final class ChatCoordinator {
             try save(updated)
         } catch {
             if activeRequests[threadID] != request.id { return }
-            // The persisted failed turn remains visible and can be retried from the saved draft.
+            // The persisted failed turn remains visible and is retried in place (regenerate).
             throw error
         }
     }
