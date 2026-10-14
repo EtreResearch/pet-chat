@@ -1,0 +1,20 @@
+name: Release
+on:
+  push:
+    tags: ['v*']
+permissions:
+  contents: write
+jobs:
+  release:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Unit tests
+        run: xcodebuild test -project PetChat.xcodeproj -scheme PetChat -destination 'platform=macOS' -only-testing:PetChatTests -parallel-testing-enabled NO CODE_SIGN_IDENTITY=- CODE_SIGNING_ALLOWED=YES
+      - name: Build DMG
+        id: dmg
+        run: echo "path=$(scripts/make-dmg.sh "${GITHUB_REF_NAME#v}" | tail -n1)" >> "$GITHUB_OUTPUT"
+      - name: Draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" "${{ steps.dmg.outputs.path }}" --draft --generate-notes --title "Pet Chat ${GITHUB_REF_NAME#v}"
