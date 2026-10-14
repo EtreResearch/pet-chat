@@ -22,7 +22,8 @@ app="$derived/Build/Products/Release/PetChat.app"
 archs="$(lipo -archs "$app/Contents/MacOS/PetChat")"
 [[ "$archs" == *arm64* && "$archs" == *x86_64* ]] || { echo "expected universal binary, got: $archs" >&2; exit 1; }
 codesign --verify --deep --strict "$app"
-[[ "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$app/Contents/Info.plist")" == "$version" ]]
+built="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$app/Contents/Info.plist")"
+[[ "$built" == "$version" ]] || { echo "expected CFBundleShortVersionString $version, got: $built" >&2; exit 1; }
 
 ditto "$app" "$stage/PetChat.app"
 ln -s /Applications "$stage/Applications"
