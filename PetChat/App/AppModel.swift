@@ -28,6 +28,15 @@ final class AppModel {
     private enum Generation { case submit, regenerate }
     /// What the error-bar Retry re-runs; set whenever `canRetrySubmission` turns on.
     private var failedGeneration = Generation.submit
+    /// A message on its way into the chat, kept until its Turn is recorded or the send ends without it.
+    private struct PendingSend {
+        let text: String
+        let images: [UUID]
+        /// True when the message came from the Draft, so a send that never reaches the chat puts it back.
+        let restoresDraft: Bool
+        let lastMessageID: UUID?
+    }
+    private var pendingSend: PendingSend?
     private(set) var models: [ProviderModel] = []
     private var modelLoadID: UUID?
     private var modelLoadProviderID: ProviderID?
@@ -59,13 +68,11 @@ final class AppModel {
             currentThreadID = last.id
             selectedProviderID = last.providerID
             selectedModelID = last.modelID
-            if last.messages.last?.role == .pet, last.messages.last?.status == .failed,
-               let question = last.messages.dropLast().last, question.role == .user {
-                draft = question.text
-                attachmentIDs = question.attachmentIDs
+            if last.messages.last?.status == .failed, last.lastAnsweredQuestion != nil {
+                // The failed Turn is already in the chat; Retry re-asks it in place and the Draft stays empty.
                 errorMessage = ChatCoordinator.Error.incompleteResponse.localizedDescription
                 canRetrySubmission = true
-                failedGeneration = .submit
+                failedGeneration = .regenerate
             }
         } else {
             selectedProviderID = ProviderID(rawValue: defaults.string(forKey: "PetChat.selectedProviderID") ?? "") ?? .ollama
@@ -207,13 +214,33 @@ final class AppModel {
     }
 
     func submit() async {
-        let text = draft
-        let images = attachmentIDs
-        guard await generate(.submit, { [coordinator] id in
+        await send(text: draft, images: attachmentIDs, restoresDraft: true)
+    }
+
+    /// Sends one message. A Draft is emptied as soon as the send starts; see `settlePendingSend()` for when it returns.
+    private func send(text: String, images: [UUID], restoresDraft: Bool) async {
+        let pending = PendingSend(text: text, images: images, restoresDraft: restoresDraft,
+                                  lastMessageID: thread?.messages.last?.id)
+        _ = await generate(.submit, pending: pending) { [coordinator] id in
             try await coordinator.send(text: text, attachmentIDs: images, threadID: id)
-        }), thread?.messages.last?.status == .complete else { return }
-        if draft == text { draft = "" }
-        attachmentIDs.removeAll { images.contains($0) }
+        }
+    }
+
+    /// Called once a send ends without success (error, Stop, shutdown, sign-out). If its Turn reached the chat, the
+    /// Draft stays empty and Retry re-asks the Turn in place; otherwise the message returns to the Draft unless the
+    /// user has started a new one.
+    private func settlePendingSend() {
+        guard let pending = pendingSend else { return }
+        pendingSend = nil
+        if thread?.messages.last?.id != pending.lastMessageID {
+            failedGeneration = .regenerate
+        } else if pending.restoresDraft, draft.isEmpty, attachmentIDs.isEmpty {
+            draft = pending.text
+            attachmentIDs = pending.images
+        } else {
+            // ponytail: unsent images left out of the Draft stay in the chat folder until the chat is deleted.
+            canRetrySubmission = false
+        }
     }
 
     func regenerateLastReply() async {
@@ -231,10 +258,15 @@ final class AppModel {
 
     /// Runs one generation in the current chat. Returns true when it finished without error and is still the
     /// active submission for the same chat.
-    private func generate(_ kind: Generation,
+    private func generate(_ kind: Generation, pending: PendingSend? = nil,
                           _ work: @escaping @MainActor @Sendable (UUID) async throws -> Void) async -> Bool {
         guard !isShuttingDown, let id = currentThreadID, !isLoading else { return false }
         guard selectedProviderID != .chatGPT || !isSigningOutChatGPT else { return false }
+        if let pending, pending.restoresDraft {
+            draft = ""
+            attachmentIDs = []
+        }
+        pendingSend = pending
         let submissionID = UUID()
         activeSubmissionID = submissionID
         isLoading = true
@@ -246,6 +278,7 @@ final class AppModel {
             if activeSubmissionID == submissionID {
                 activeSubmissionID = nil
                 submissionTask = nil
+                pendingSend = nil
                 isLoading = false
             }
         }
@@ -257,6 +290,7 @@ final class AppModel {
                 errorMessage = error.localizedDescription
                 canRetrySubmission = true
                 failedGeneration = kind
+                settlePendingSend()
             }
             return false
         }
@@ -264,15 +298,13 @@ final class AppModel {
 
     func tellMeMore() async {
         guard canTellMeMore else { return }
-        draft = ChatCoordinator.expansionQuestion
-        await submit()
+        await send(text: ChatCoordinator.expansionQuestion, images: [], restoresDraft: false)
     }
 
-    /// Suggestion chip: sends `text` through the normal submit path; ignored while the composer holds a draft or image.
+    /// Suggestion chip: sends `text` without touching the Draft; ignored while the composer holds a draft or image.
     func sendSuggestion(_ text: String) async {
         guard !isLoading, draft.isEmpty, attachmentIDs.isEmpty else { return }
-        draft = text
-        await submit()
+        await send(text: text, images: [], restoresDraft: false)
     }
 
     func stop() async {
@@ -285,6 +317,7 @@ final class AppModel {
             }
         }
         if activeSubmissionID == submissionID {
+            settlePendingSend()
             submissionTask?.cancel()
             submissionTask = nil
             activeSubmissionID = nil
@@ -302,6 +335,7 @@ final class AppModel {
         if selectedProviderID == .chatGPT { activeSubmissionID = nil }
         do { try await coordinator.stopAll(providerID: .chatGPT) } catch { report(error) }
         if selectedProviderID == .chatGPT {
+            settlePendingSend()
             submissionTask?.cancel()
             submissionTask = nil
             models = []
@@ -320,6 +354,7 @@ final class AppModel {
         isLoading = false
         await auth.shutdown()
         do { try await coordinator.stopAll() } catch { report(error) }
+        settlePendingSend()
         submissionTask?.cancel()
         submissionTask = nil
     }

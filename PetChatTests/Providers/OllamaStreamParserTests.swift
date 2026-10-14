@@ -5,7 +5,7 @@ import XCTest
 
 final class OllamaStreamParserTests: XCTestCase {
     @MainActor
-    func testLengthLimitedAnswerKeepsPartialFailedTurnAndRetryDraft() async throws {
+    func testLengthLimitedAnswerKeepsPartialFailedTurnAndOffersRetry() async throws {
         MockOllamaURLProtocol.handler = { request in
             switch request.url?.path {
             case "/api/tags": return (200, Data(#"{"models":[{"name":"text:latest"}]}"#.utf8))
@@ -34,7 +34,8 @@ final class OllamaStreamParserTests: XCTestCase {
         await model.submit()
         XCTAssertEqual(model.thread?.messages.last?.text, "partial ending")
         XCTAssertEqual(try store.load().last?.messages.last?.status, .failed)
-        XCTAssertEqual(model.draft, "Explain this")
+        XCTAssertEqual(model.thread?.messages.first?.text, "Explain this")
+        XCTAssertEqual(model.draft, "")
         XCTAssertTrue(model.canRetrySubmission)
     }
 
