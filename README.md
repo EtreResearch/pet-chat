@@ -16,7 +16,7 @@ A little cat that lives in the corner of your Mac's screen. Click it, ask a ques
 1. Download `PetChat-<version>.dmg` from the [Releases page](https://github.com/EtreResearch/pet-chat/releases/latest).
 2. Open it and drag **Pet Chat** onto **Applications**.
 3. Open **Pet Chat** from Applications.
-4. macOS will say it can't check the app for malicious software. Click **Done**, then open **System Settings → Privacy & Security**, scroll down to the Pet Chat message and click **Open Anyway**, then confirm with your password. You only do this once. (Pet Chat isn't signed with an Apple Developer ID yet, which is why macOS asks.)
+4. macOS will say it can't check the app for malicious software. Click **Done** (or **OK**), then open **System Settings → Privacy & Security**, scroll down to the Pet Chat message and click **Open Anyway** (it only appears after you've tried to open the app once), then confirm with your password. You only do this once. (Pet Chat isn't signed with an Apple Developer ID yet, which is why macOS asks.)
 
 The cat appears in the bottom-right corner. Pet Chat shows in the Dock and the menu bar. If you'd rather keep it to the menu bar only, turn off **Show in Dock** in Settings.
 
@@ -76,7 +76,7 @@ Wait for the Release workflow to finish (it runs the unit tests and builds the D
 
 ### Tests
 
-Swift 6, SwiftUI/AppKit and SwiftData. The project has no third-party dependencies. Run the tests (161 unit and UI tests, all passing as of 2026-10-13):
+Swift 6, SwiftUI/AppKit and SwiftData. The project has no third-party dependencies. Run the unit and UI tests:
 
 ```sh
 xcodebuild test -project PetChat.xcodeproj -scheme PetChat -destination 'platform=macOS' -parallel-testing-enabled NO CODE_SIGN_IDENTITY=- CODE_SIGNING_ALLOWED=YES
