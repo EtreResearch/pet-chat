@@ -11,6 +11,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var settingsWindow: NSWindow?
     private var shortcutRegistrationError: String?
 
+    func applicationWillFinishLaunching(_ notification: Notification) {
+        #if DEBUG
+        if ProcessInfo.processInfo.environment["PET_CHAT_UI_ROOT"] != nil || NSClassFromString("XCTestCase") != nil { return }
+        #endif
+        // ponytail: LSUIElement is gone, so Dock-off launches may still flash an icon before this runs.
+        if UserDefaults.standard.object(forKey: DockPreference.key) as? Bool == false {
+            NSApp.setActivationPolicy(.accessory)
+        }
+    }
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         #if DEBUG
         if let path = ProcessInfo.processInfo.environment["PET_CHAT_UI_ROOT"] {

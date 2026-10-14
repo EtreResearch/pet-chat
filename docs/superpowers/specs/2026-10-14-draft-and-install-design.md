@@ -58,3 +58,4 @@ Terms: **Draft** and **Turn** as defined in `CONTEXT.md`.
 
 - Unsigned app: first launch needs Open Anyway; every update may trigger one keychain prompt for ChatGPT users.
 - No auto-update; users must check Releases.
+- With Show in Dock off, the Dock icon may flash briefly at launch (the policy is applied in applicationWillFinishLaunching, not via LSUIElement).
