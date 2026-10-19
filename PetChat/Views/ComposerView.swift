@@ -164,6 +164,15 @@ private final class AttachmentTextView: NSTextView {
     var onImage: ((NSPasteboard) -> Void)?
     var onSubmit: (() -> Void)?
 
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        guard window != nil else { return }
+        DispatchQueue.main.async { [weak self] in
+            guard let self, let window = self.window, NSApp.isActive, window.isKeyWindow else { return }
+            window.makeFirstResponder(self)
+        }
+    }
+
     override var readablePasteboardTypes: [NSPasteboard.PasteboardType] {
         [.fileURL, .png, .tiff] + super.readablePasteboardTypes
     }

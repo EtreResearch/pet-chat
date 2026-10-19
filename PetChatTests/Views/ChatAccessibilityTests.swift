@@ -161,6 +161,37 @@ final class ChatAccessibilityTests: XCTestCase {
         XCTAssertEqual(text.string, "")
     }
 
+    func testComposerAppearingInBackgroundWindowDoesNotStealFocus() async throws {
+        let model = try makeSettingsModel()
+        try model.select(providerID: .ollama, modelID: "test")
+        let foreground = NSWindow(contentRect: CGRect(x: 0, y: 0, width: 200, height: 100),
+                                  styleMask: .titled, backing: .buffered, defer: false)
+        foreground.isReleasedWhenClosed = false
+        let field = NSTextField(string: "Keep focus here")
+        foreground.contentView = field
+        NSApp.activate(ignoringOtherApps: true)
+        foreground.makeKeyAndOrderFront(nil)
+        foreground.makeFirstResponder(field)
+        let responder = foreground.firstResponder
+        let background = NSWindow(contentRect: CGRect(x: 0, y: 0, width: 440, height: 180),
+                                  styleMask: .titled, backing: .buffered, defer: false)
+        background.isReleasedWhenClosed = false
+        let host = NSHostingView(rootView: ComposerView(model: model))
+        background.contentView = host
+        background.orderFront(nil)
+        defer {
+            background.contentView = nil
+            background.close()
+            foreground.close()
+        }
+        host.layoutSubtreeIfNeeded()
+        try await Task.sleep(for: .milliseconds(150))
+        XCTAssertTrue(foreground.isKeyWindow)
+        XCTAssertTrue(foreground.firstResponder === responder)
+        XCTAssertFalse(background.isKeyWindow)
+        XCTAssertFalse(background.firstResponder is NSTextView)
+    }
+
     private func makeSettingsModel() throws -> AppModel {
         let attachments = AttachmentStore(root: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString))
         let container = try ModelContainer(for: ChatRecord.self, MessageRecord.self,
