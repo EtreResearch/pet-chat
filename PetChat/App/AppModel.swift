@@ -183,6 +183,22 @@ final class AppModel {
     }
 
     func pasteImage(from pasteboard: NSPasteboard = .general) throws {
+        guard !isShuttingDown, !isLoading else { throw ChatCoordinator.Error.busy }
+        if let urls = pasteboard.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL],
+           !urls.isEmpty {
+            let images = try urls.map { url -> Data in
+                let scoped = url.startAccessingSecurityScopedResource()
+                defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+                guard let image = NSImage(contentsOf: url), let tiff = image.tiffRepresentation,
+                      let bitmap = NSBitmapImageRep(data: tiff),
+                      let png = bitmap.representation(using: .png, properties: [:]) else {
+                    throw AttachmentStore.Error.invalidImage
+                }
+                return png
+            }
+            for image in images { try attachImage(image) }
+            return
+        }
         if let png = pasteboard.data(forType: .png) { try attachImage(png); return }
         guard let image = NSImage(pasteboard: pasteboard), let tiff = image.tiffRepresentation,
               let bitmap = NSBitmapImageRep(data: tiff),

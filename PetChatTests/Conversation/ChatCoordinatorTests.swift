@@ -1,5 +1,6 @@
 import SwiftData
 import AppKit
+import SwiftUI
 import XCTest
 @testable import PetChat
 
@@ -815,6 +816,52 @@ final class ChatCoordinatorTests: XCTestCase {
         XCTAssertEqual(model.draft, "")
     }
 
+    func testEditorFileTransferCreatesPreviewAndSendsImageBytes() async throws {
+        let fixture = try Fixture()
+        let model = AppModel(coordinator: fixture.coordinator, auth: fixture.auth, defaults: fixture.defaults)
+        try model.select(providerID: .ollama, modelID: "text")
+        model.draft = "What does mlx mean?"
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let file = directory.appendingPathComponent("Screenshot with spaces.png")
+        try testPNG().write(to: file)
+        let pasteboard = NSPasteboard.withUniqueName()
+        defer { pasteboard.releaseGlobally() }
+        pasteboard.writeObjects([file as NSURL])
+        pasteboard.setString(file.path, forType: .string)
+        let host = NSHostingView(rootView: ComposerView(model: model))
+        host.frame = CGRect(x: 0, y: 0, width: 440, height: 180)
+        let window = NSWindow(contentRect: host.frame, styleMask: .titled, backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = host
+        window.makeKeyAndOrderFront(nil)
+        defer { window.contentView = nil; window.close() }
+        host.layoutSubtreeIfNeeded()
+        func editor(in view: NSView) -> NSTextView? {
+            if let text = view as? NSTextView { return text }
+            return view.subviews.lazy.compactMap { editor(in: $0) }.first
+        }
+        let text = try XCTUnwrap(editor(in: host))
+
+        let drag = ImageFileDrag(pasteboard: pasteboard, window: window)
+        XCTAssertFalse(text.draggingEntered(drag).isEmpty)
+        XCTAssertTrue(text.prepareForDragOperation(drag))
+        XCTAssertTrue(text.performDragOperation(drag))
+
+        XCTAssertEqual(model.draft, "What does mlx mean?")
+        XCTAssertEqual(text.string, model.draft)
+        XCTAssertEqual(model.attachmentIDs.count, 1)
+        let image = try XCTUnwrap(model.attachmentIDs.first)
+        XCTAssertNotNil(NSImage(data: try XCTUnwrap(model.imageData(for: image))))
+        try FileManager.default.removeItem(at: file)
+        XCTAssertTrue(fixture.provider.requests.isEmpty)
+        await model.submit()
+        XCTAssertEqual(model.thread?.messages.first?.attachmentIDs, [image])
+        XCTAssertEqual(fixture.provider.requests.last?.imageData, [image: model.imageData(for: image)!])
+        XCTAssertFalse(fixture.provider.requests.last!.messages.last!.text.contains(file.path))
+    }
+
     func testPasteCreatesPreviewWithoutSendingAndRemovalDeletesOnlyUnsubmittedImage() throws {
         let fixture = try Fixture()
         let model = AppModel(coordinator: fixture.coordinator, auth: fixture.auth, defaults: fixture.defaults)
@@ -830,6 +877,64 @@ final class ChatCoordinatorTests: XCTestCase {
         try model.removeAttachment(image)
         XCTAssertTrue(model.attachmentIDs.isEmpty)
         XCTAssertThrowsError(try fixture.attachments.load(image, threadID: model.currentThreadID!))
+    }
+
+    func testFileTransferImportsEveryImageAndRejectsMixedInvalidFilesBeforeChangingDraft() throws {
+        let fixture = try Fixture()
+        let model = AppModel(coordinator: fixture.coordinator, auth: fixture.auth, defaults: fixture.defaults)
+        try model.select(providerID: .ollama, modelID: "text")
+        model.draft = "Keep this question"
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let files = [directory.appendingPathComponent("first.png"), directory.appendingPathComponent("second.png")]
+        for (index, file) in files.enumerated() { try testPNG(UInt8(index + 1)).write(to: file) }
+        let pasteboard = NSPasteboard.withUniqueName()
+        defer { pasteboard.releaseGlobally() }
+        pasteboard.writeObjects(files.map { $0 as NSURL })
+        try model.pasteImage(from: pasteboard)
+        let images = model.attachmentIDs
+        XCTAssertEqual(images.count, 2)
+        for image in images { XCTAssertNotNil(NSImage(data: try XCTUnwrap(model.imageData(for: image)))) }
+
+        let invalid = directory.appendingPathComponent("not-an-image.png")
+        try Data("Not an image".utf8).write(to: invalid)
+        pasteboard.clearContents()
+        pasteboard.writeObjects([files[0] as NSURL, invalid as NSURL])
+        XCTAssertThrowsError(try model.pasteImage(from: pasteboard))
+        XCTAssertEqual(model.attachmentIDs, images)
+        XCTAssertEqual(model.draft, "Keep this question")
+    }
+
+    func testEditorPastesImagesWithoutInsertingTheirTextRepresentationAndKeepsPlainTextPaste() throws {
+        let fixture = try Fixture()
+        let model = AppModel(coordinator: fixture.coordinator, auth: fixture.auth, defaults: fixture.defaults)
+        try model.select(providerID: .ollama, modelID: "text")
+        let host = NSHostingView(rootView: ComposerView(model: model))
+        host.frame = CGRect(x: 0, y: 0, width: 440, height: 180)
+        host.layoutSubtreeIfNeeded()
+        func editor(in view: NSView) -> NSTextView? {
+            if let text = view as? NSTextView { return text }
+            return view.subviews.lazy.compactMap { editor(in: $0) }.first
+        }
+        let text = try XCTUnwrap(editor(in: host))
+        let pasteboard = NSPasteboard.withUniqueName()
+        defer { pasteboard.releaseGlobally() }
+        for type in [NSPasteboard.PasteboardType.png, .tiff] {
+            pasteboard.clearContents()
+            let bytes = type == .png ? testPNG() : try XCTUnwrap(NSImage(data: testPNG())?.tiffRepresentation)
+            pasteboard.setData(bytes, forType: type)
+            pasteboard.setString("image fallback text", forType: .string)
+            XCTAssertTrue(text.readSelection(from: pasteboard, type: .string))
+            XCTAssertEqual(model.draft, "")
+            XCTAssertEqual(text.string, "")
+        }
+        XCTAssertEqual(model.attachmentIDs.count, 2)
+        pasteboard.clearContents()
+        pasteboard.setString("Actual typed text", forType: .string)
+        XCTAssertTrue(text.readSelection(from: pasteboard, type: .string))
+        XCTAssertEqual(model.draft, "Actual typed text")
+        XCTAssertEqual(text.string, model.draft)
     }
 
     func testInvalidPastePreservesDraftAndImages() throws {
@@ -1214,6 +1319,30 @@ final class ChatCoordinatorTests: XCTestCase {
         }
     }
     func resume() { continuation?.resume() }
+}
+
+@MainActor private final class ImageFileDrag: NSObject, NSDraggingInfo {
+    let draggingPasteboard: NSPasteboard
+    let draggingDestinationWindow: NSWindow?
+    init(pasteboard: NSPasteboard, window: NSWindow) {
+        draggingPasteboard = pasteboard
+        draggingDestinationWindow = window
+    }
+    var draggingSourceOperationMask: NSDragOperation { .copy }
+    var draggingLocation: NSPoint { .zero }
+    var draggedImageLocation: NSPoint { .zero }
+    nonisolated var draggedImage: NSImage? { nil }
+    var draggingSource: Any? { nil }
+    var draggingSequenceNumber: Int { 1 }
+    var draggingFormation: NSDraggingFormation = .default
+    var animatesToDestination = false
+    var numberOfValidItemsForDrop = 1
+    var springLoadingHighlight: NSSpringLoadingHighlight { .none }
+    func slideDraggedImage(to screenPoint: NSPoint) {}
+    func resetSpringLoading() {}
+    func enumerateDraggingItems(options enumOpts: NSDraggingItemEnumerationOptions = [], for view: NSView?,
+                                classes classArray: [AnyClass], searchOptions: [NSPasteboard.ReadingOptionKey: Any] = [:],
+                                using block: (NSDraggingItem, Int, UnsafeMutablePointer<ObjCBool>) -> Void) {}
 }
 
 private enum TestFailure: Error { case disconnected, disk }

@@ -3,7 +3,6 @@ import SwiftUI
 
 struct ComposerView: View {
     @Bindable var model: AppModel
-    @FocusState private var isFocused: Bool
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -65,21 +64,8 @@ struct ComposerView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .hidden()
             .overlay {
-                TextEditor(text: $model.draft)
-                    .scrollContentBackground(.hidden)
-                    .scrollIndicators(.never)
-                    .focused($isFocused)
-                    .onAppear { if NSApp.isActive { isFocused = true } }
-                    .onKeyPress(.return, phases: [.down, .repeat]) { handleReturn($0) }
-                    .accessibilityLabel("Message")
+                ComposerTextEditor(model: model)
             }
-    }
-
-    private func handleReturn(_ press: KeyPress) -> KeyPress.Result {
-        if press.modifiers.contains(.shift) { return .ignored }
-        if (NSApp.keyWindow?.firstResponder as? NSTextView)?.hasMarkedText() == true { return .ignored }
-        if model.canSend { Task { await model.submit() } }
-        return .handled
     }
 
     private func secondaryButton(_ title: String, systemImage: String, action: @escaping () -> Void) -> some View {
@@ -121,6 +107,88 @@ struct ComposerView: View {
         .buttonStyle(.plain)
         .disabled(!enabled)
         .accessibilityLabel(title)
+    }
+}
+
+private struct ComposerTextEditor: NSViewRepresentable {
+    let model: AppModel
+
+    func makeCoordinator() -> Coordinator { Coordinator(model: model) }
+
+    func makeNSView(context: Context) -> NSScrollView {
+        let scroll = NSScrollView()
+        scroll.drawsBackground = false
+        let text = AttachmentTextView()
+        text.isRichText = false
+        text.drawsBackground = false
+        text.allowsUndo = true
+        text.isVerticallyResizable = true
+        text.isHorizontallyResizable = false
+        text.autoresizingMask = [.width]
+        text.textContainerInset = .zero
+        text.textContainer?.widthTracksTextView = true
+        text.textContainer?.containerSize = NSSize(width: 0, height: CGFloat.greatestFiniteMagnitude)
+        text.setAccessibilityLabel("Message")
+        text.delegate = context.coordinator
+        text.onImage = { pasteboard in
+            do { try model.pasteImage(from: pasteboard) } catch { model.report(error) }
+        }
+        text.onSubmit = { if model.canSend { Task { await model.submit() } } }
+        text.registerForDraggedTypes([.fileURL, .png, .tiff])
+        scroll.documentView = text
+        return scroll
+    }
+
+    func updateNSView(_ scroll: NSScrollView, context: Context) {
+        guard let text = scroll.documentView as? AttachmentTextView else { return }
+        text.font = .systemFont(ofSize: model.textSize)
+        text.textColor = .labelColor
+        text.insertionPointColor = .labelColor
+        if text.string != model.draft {
+            text.string = model.draft
+        }
+    }
+
+    final class Coordinator: NSObject, NSTextViewDelegate {
+        let model: AppModel
+        init(model: AppModel) { self.model = model }
+        func textDidChange(_ notification: Notification) {
+            guard let text = notification.object as? NSTextView else { return }
+            model.draft = text.string
+        }
+    }
+}
+
+/// Plain-text NSTextView would otherwise turn a dropped image file into its path.
+private final class AttachmentTextView: NSTextView {
+    var onImage: ((NSPasteboard) -> Void)?
+    var onSubmit: (() -> Void)?
+
+    override var readablePasteboardTypes: [NSPasteboard.PasteboardType] {
+        [.fileURL, .png, .tiff] + super.readablePasteboardTypes
+    }
+
+    override func readSelection(from pasteboard: NSPasteboard, type: NSPasteboard.PasteboardType) -> Bool {
+        if pasteboard.availableType(from: [.fileURL, .png, .tiff]) != nil {
+            onImage?(pasteboard)
+            return true
+        }
+        return super.readSelection(from: pasteboard, type: type)
+    }
+
+    override func performDragOperation(_ sender: any NSDraggingInfo) -> Bool {
+        if sender.draggingPasteboard.availableType(from: [.fileURL, .png, .tiff]) != nil {
+            return readSelection(from: sender.draggingPasteboard, type: .fileURL)
+        }
+        return super.performDragOperation(sender)
+    }
+
+    override func keyDown(with event: NSEvent) {
+        if [36, 76].contains(event.keyCode), !event.modifierFlags.contains(.shift), !hasMarkedText() {
+            onSubmit?()
+            return
+        }
+        super.keyDown(with: event)
     }
 }
 
