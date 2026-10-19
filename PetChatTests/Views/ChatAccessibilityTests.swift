@@ -41,7 +41,15 @@ final class ChatAccessibilityTests: XCTestCase {
         }
         XCTAssertTrue(labels.contains { $0.contains("Pet") && $0.contains("Fixture reply") })
 
-        try model.attachImage(testPNG())
+        func editor(in view: NSView) -> NSTextView? {
+            if let text = view as? NSTextView { return text }
+            return view.subviews.lazy.compactMap { editor(in: $0) }.first
+        }
+        let pasteboard = NSPasteboard.withUniqueName()
+        defer { pasteboard.releaseGlobally() }
+        pasteboard.setData(testPNG(), forType: .png)
+        let text = try XCTUnwrap(editor(in: hosting))
+        XCTAssertTrue(text.readSelection(from: pasteboard, type: .png))
         model.draft = "What is in this picture?"
         try await Task.sleep(for: .milliseconds(150))
         hosting.layoutSubtreeIfNeeded()
@@ -121,6 +129,67 @@ final class ChatAccessibilityTests: XCTestCase {
         XCTAssertTrue(accessibilityLabels(in: AXUIElementCreateApplication(getpid())).contains("Pet, thinking"))
         XCTAssertEqual(host.fittingSize.width, 64, accuracy: 1)
         XCTAssertEqual(host.fittingSize.height, 64, accuracy: 1)
+    }
+
+    func testComposerEnterSendsAndShiftEnterKeepsMultilineDraft() async throws {
+        let model = try makeSettingsModel()
+        try model.select(providerID: .ollama, modelID: "test")
+        let host = NSHostingView(rootView: ComposerView(model: model))
+        host.frame = CGRect(x: 0, y: 0, width: 440, height: 180)
+        let window = show(host)
+        defer { window.contentView = nil; window.close() }
+        func editor(in view: NSView) -> NSTextView? {
+            if let text = view as? NSTextView { return text }
+            return view.subviews.lazy.compactMap { editor(in: $0) }.first
+        }
+        let text = try XCTUnwrap(editor(in: host))
+        window.makeFirstResponder(text)
+        text.insertText("First line", replacementRange: NSRange(location: NSNotFound, length: 0))
+        func enter(modifiers: NSEvent.ModifierFlags) throws -> NSEvent {
+            try XCTUnwrap(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: modifiers,
+                timestamp: 0, windowNumber: window.windowNumber, context: nil, characters: "\r",
+                charactersIgnoringModifiers: "\r", isARepeat: false, keyCode: 36))
+        }
+        text.keyDown(with: try enter(modifiers: .shift))
+        text.insertText("Second line", replacementRange: NSRange(location: NSNotFound, length: 0))
+        XCTAssertEqual(model.draft, "First line\nSecond line")
+        XCTAssertTrue(model.thread!.messages.isEmpty)
+        text.keyDown(with: try enter(modifiers: []))
+        try await Task.sleep(for: .milliseconds(150))
+        XCTAssertEqual(model.thread?.messages.first?.text, "First line\nSecond line")
+        XCTAssertEqual(model.draft, "")
+        XCTAssertEqual(text.string, "")
+    }
+
+    func testComposerAppearingInBackgroundWindowDoesNotStealFocus() async throws {
+        let model = try makeSettingsModel()
+        try model.select(providerID: .ollama, modelID: "test")
+        let foreground = NSWindow(contentRect: CGRect(x: 0, y: 0, width: 200, height: 100),
+                                  styleMask: .titled, backing: .buffered, defer: false)
+        foreground.isReleasedWhenClosed = false
+        let field = NSTextField(string: "Keep focus here")
+        foreground.contentView = field
+        NSApp.activate(ignoringOtherApps: true)
+        foreground.makeKeyAndOrderFront(nil)
+        foreground.makeFirstResponder(field)
+        let responder = foreground.firstResponder
+        let background = NSWindow(contentRect: CGRect(x: 0, y: 0, width: 440, height: 180),
+                                  styleMask: .titled, backing: .buffered, defer: false)
+        background.isReleasedWhenClosed = false
+        let host = NSHostingView(rootView: ComposerView(model: model))
+        background.contentView = host
+        background.orderFront(nil)
+        defer {
+            background.contentView = nil
+            background.close()
+            foreground.close()
+        }
+        host.layoutSubtreeIfNeeded()
+        try await Task.sleep(for: .milliseconds(150))
+        XCTAssertTrue(foreground.isKeyWindow)
+        XCTAssertTrue(foreground.firstResponder === responder)
+        XCTAssertFalse(background.isKeyWindow)
+        XCTAssertFalse(background.firstResponder is NSTextView)
     }
 
     private func makeSettingsModel() throws -> AppModel {
