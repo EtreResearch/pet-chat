@@ -59,6 +59,12 @@ struct SettingsView: View {
                 }
                 .accessibilityLabel("Pet display")
                 .onChange(of: displayID) { _, id in panelController.repositionPet(for: id) }
+                Picker("Cat color", selection: Binding(get: { panelController.model.petColor }, set: { panelController.model.petColor = $0 })) {
+                    ForEach(PetColor.allCases, id: \.self) { color in
+                        Text(color.displayName).tag(color)
+                    }
+                }
+                .accessibilityLabel("Cat color")
                 Picker("Text size", selection: Binding(get: { panelController.model.textSize }, set: { panelController.model.textSize = $0 })) {
                     Text("Standard (13 pt)").tag(13.0)
                     Text("Larger (17 pt)").tag(17.0)
@@ -80,7 +86,7 @@ struct SettingsView: View {
                 Button("Screen Recording Settings") {
                     NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture")!)
                 }
-                Text("Pet animations follow macOS Reduce Motion. Choose a larger chat text size above. Colors follow your system appearance.")
+                Text("Pet animations follow macOS Reduce Motion. Choose your cat’s color and chat text size above. Chat colors follow your system appearance.")
                     .font(.caption)
             }
             .padding(20)

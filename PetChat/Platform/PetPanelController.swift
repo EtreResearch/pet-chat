@@ -315,7 +315,7 @@ private final class PetInteractionView: NSHostingView<PetSurface> {
 private struct PetSurface: View {
     @Bindable var model: AppModel
     var body: some View {
-        PetCharacterView(isThinking: model.isLoading, completionID: model.thread?.messages.last.flatMap {
+        PetCharacterView(color: model.petColor, isThinking: model.isLoading, completionID: model.thread?.messages.last.flatMap {
             $0.role == .pet && $0.status == .complete ? $0.id : nil
         })
         .accessibilityHidden(true)

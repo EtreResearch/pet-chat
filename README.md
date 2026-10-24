@@ -33,7 +33,7 @@ Also:
 - **Tell me more** gives a longer answer. **Copy** and **Retry** sit under each answer.
 - Drag an image into the message box, or use **Capture area** or **Paste image**, to show Pet a picture. Check its preview, then send.
 - The **Chat** menu starts a new chat, changes the model, or deletes the chat.
-- **Settings** (Command + , or the menu-bar cat): shortcut, screen, text size, launch at login, and **Show in Dock**.
+- **Settings** (Command + , or the menu-bar cat): shortcut, screen, cat color, text size, launch at login, and **Show in Dock**. Cat colors apply immediately and are remembered next time.
 
 ## Privacy
 

@@ -16,6 +16,7 @@ final class AppModel {
     private(set) var selectedProviderID: ProviderID = .ollama
     private(set) var selectedModelID = ""
     var textSize: Double { didSet { defaults.set(textSize, forKey: "PetChat.textSize") } }
+    var petColor: PetColor { didSet { defaults.set(petColor.rawValue, forKey: "PetChat.petColor") } }
     var draft = ""
     var attachmentIDs: [UUID] = []
     var captureRegion: (@MainActor () async throws -> Data?)?
@@ -61,6 +62,7 @@ final class AppModel {
         self.auth = auth
         self.defaults = defaults
         textSize = defaults.double(forKey: "PetChat.textSize") == 17 ? 17 : 13
+        petColor = PetColor(rawValue: defaults.string(forKey: "PetChat.petColor") ?? "") ?? .blue
         self.loginItemController = loginItemController ?? LoginItemController(defaults: defaults)
         self.signIn = signIn ?? { _ = try await auth.signIn() }
         self.signOut = signOut ?? { try await auth.signOut() }

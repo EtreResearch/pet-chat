@@ -502,6 +502,24 @@ final class ChatCoordinatorTests: XCTestCase {
         XCTAssertEqual(invalid.textSize, 13)
     }
 
+    func testCatColorDefaultsToBlueAndPersistsAcrossModelRecreation() throws {
+        let fixture = try Fixture()
+        let model = AppModel(coordinator: fixture.coordinator, auth: fixture.auth, defaults: fixture.defaults)
+        XCTAssertEqual(model.petColor, .blue)
+        for color in PetColor.allCases {
+            model.petColor = color
+            let restored = AppModel(coordinator: fixture.coordinator, auth: fixture.auth, defaults: fixture.defaults)
+            XCTAssertEqual(restored.petColor, color)
+        }
+    }
+
+    func testUnknownSavedCatColorFallsBackToBlue() throws {
+        let fixture = try Fixture()
+        fixture.defaults.set("unknown-color", forKey: "PetChat.petColor")
+        let model = AppModel(coordinator: fixture.coordinator, auth: fixture.auth, defaults: fixture.defaults)
+        XCTAssertEqual(model.petColor, .blue)
+    }
+
     func testRestartRestoresChatProviderIdentityWithoutDiscovery() throws {
         let fixture = try Fixture()
         let original = AppModel(coordinator: fixture.coordinator, auth: fixture.auth, defaults: fixture.defaults)

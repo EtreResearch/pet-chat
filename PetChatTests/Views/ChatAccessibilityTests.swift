@@ -88,11 +88,25 @@ final class ChatAccessibilityTests: XCTestCase {
         defer { window.contentView = nil; window.close() }
         try await Task.sleep(for: .milliseconds(150))
         let labels = accessibilityLabels(in: AXUIElementCreateApplication(getpid()))
-        for label in ["Launch at login", "Sign out of ChatGPT", "Open chat shortcut", "Pet display", "Text size"] {
+        for label in ["Launch at login", "Sign out of ChatGPT", "Open chat shortcut", "Pet display", "Cat color", "Text size"] {
             XCTAssertTrue(labels.contains(label), "Missing accessible \(label): \(labels)")
         }
         XCTAssertTrue(labels.contains { $0.contains("Screen Recording") && $0.contains("System Settings") })
         XCTAssertTrue(labels.contains { $0.contains("Ollama") && $0.contains("test") })
+        func colorPicker(in view: NSView) -> NSPopUpButton? {
+            if let picker = view as? NSPopUpButton, picker.itemTitles.contains("Ginger") { return picker }
+            return view.subviews.lazy.compactMap { colorPicker(in: $0) }.first
+        }
+        let picker = try XCTUnwrap(colorPicker(in: host))
+        picker.selectItem(withTitle: "Ginger")
+        let item = try XCTUnwrap(picker.selectedItem)
+        let action = try XCTUnwrap(item.action)
+        XCTAssertTrue(NSApp.sendAction(action, to: item.target, from: item))
+        try await Task.sleep(for: .milliseconds(100))
+        XCTAssertEqual(model.petColor, .ginger)
+        model.petColor = .sage
+        try await Task.sleep(for: .milliseconds(100))
+        XCTAssertEqual(picker.titleOfSelectedItem, "Sage")
     }
 
     func testLargerTextScalesComposerFontAndEditorWithinPanel() async throws {
