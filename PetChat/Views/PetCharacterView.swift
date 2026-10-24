@@ -1,6 +1,23 @@
 import SwiftUI
 
+enum PetColor: String, CaseIterable {
+    case blue, sage, ginger, rose, lavender
+
+    var displayName: String { rawValue.capitalized }
+
+    var fill: Color {
+        switch self {
+        case .blue: Color(red: 0.38, green: 0.46, blue: 0.61)
+        case .sage: Color(red: 0.48, green: 0.65, blue: 0.52)
+        case .ginger: Color(red: 0.83, green: 0.57, blue: 0.32)
+        case .rose: Color(red: 0.78, green: 0.53, blue: 0.60)
+        case .lavender: Color(red: 0.65, green: 0.55, blue: 0.78)
+        }
+    }
+}
+
 struct PetCharacterView: View {
+    var color: PetColor = .blue
     var isThinking = false
     var completionID: UUID?
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -12,23 +29,23 @@ struct PetCharacterView: View {
             let blink = !reduceMotion && !isThinking && time.truncatingRemainder(dividingBy: 5.3) < 0.14
             let breath = reduceMotion ? 1 : 1 + sin(time * 2) * 0.012
             Canvas { context, _ in
-                let blue = Color(red: 0.38, green: 0.46, blue: 0.61)
+                let fur = color.fill
                 let dark = Color(red: 0.19, green: 0.24, blue: 0.34)
                 func ellipse(_ rect: CGRect, _ color: Color) { context.fill(Path(ellipseIn: rect), with: .color(color)) }
                 var tail = Path()
                 tail.move(to: CGPoint(x: 43, y: 57))
                 tail.addCurve(to: CGPoint(x: 57, y: 38), control1: CGPoint(x: 65, y: 64), control2: CGPoint(x: 61, y: 45))
-                context.stroke(tail, with: .color(blue), style: StrokeStyle(lineWidth: 7, lineCap: .round))
-                ellipse(CGRect(x: 16, y: 29, width: 34, height: 34), blue)
+                context.stroke(tail, with: .color(fur), style: StrokeStyle(lineWidth: 7, lineCap: .round))
+                ellipse(CGRect(x: 16, y: 29, width: 34, height: 34), fur)
                 var ears = Path()
                 ears.move(to: CGPoint(x: 13, y: 23)); ears.addLine(to: CGPoint(x: 13, y: 2))
                 ears.addLine(to: CGPoint(x: 27, y: 14)); ears.addLine(to: CGPoint(x: 39, y: 14))
                 ears.addLine(to: CGPoint(x: 51, y: 2)); ears.addLine(to: CGPoint(x: 51, y: 24)); ears.closeSubpath()
-                context.fill(ears, with: .color(blue))
-                ellipse(CGRect(x: 11, y: 11, width: 42, height: 31), blue)
+                context.fill(ears, with: .color(fur))
+                ellipse(CGRect(x: 11, y: 11, width: 42, height: 31), fur)
                 ellipse(CGRect(x: 24, y: 39, width: 18, height: 21), Color.white.opacity(0.13))
-                ellipse(CGRect(x: 16, y: 57, width: 17, height: 7), blue)
-                ellipse(CGRect(x: 34, y: 57, width: 17, height: 7), blue)
+                ellipse(CGRect(x: 16, y: 57, width: 17, height: 7), fur)
+                ellipse(CGRect(x: 34, y: 57, width: 17, height: 7), fur)
                 let eyesClosed = blink || celebrating
                 for x in [23.0, 41.0] {
                     if eyesClosed {

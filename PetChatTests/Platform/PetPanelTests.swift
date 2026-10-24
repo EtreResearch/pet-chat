@@ -289,6 +289,31 @@ final class PetPanelTests: XCTestCase {
         XCTAssertTrue(panel.chatPanel.firstResponder is NSTextView)
     }
 
+    func testChangingCatColorRepaintsTheExistingDesktopPet() async throws {
+        let model = try makeModel()
+        let panel = PetPanelController(model: model, defaults: UserDefaults(suiteName: UUID().uuidString)!,
+                                       fullScreenProvider: { _ in false })
+        panel.showPetOnly()
+        defer { panel.hidePet() }
+        let view = try XCTUnwrap(panel.petPanel.contentView)
+        func furColor() throws -> NSColor {
+            view.layoutSubtreeIfNeeded()
+            view.displayIfNeeded()
+            let bitmap = try XCTUnwrap(view.bitmapImageRepForCachingDisplay(in: view.bounds))
+            view.cacheDisplay(in: view.bounds, to: bitmap)
+            let scale = CGFloat(bitmap.pixelsWide) / view.bounds.width
+            return try XCTUnwrap(bitmap.colorAt(x: Int(20 * scale), y: Int(47 * scale))?.usingColorSpace(.deviceRGB))
+        }
+        try await Task.sleep(for: .milliseconds(150))
+        let blue = try furColor()
+        XCTAssertLessThan(blue.redComponent, blue.blueComponent)
+        model.petColor = .ginger
+        try await Task.sleep(for: .milliseconds(150))
+        let ginger = try furColor()
+        XCTAssertGreaterThan(ginger.redComponent, ginger.blueComponent)
+        XCTAssertTrue(panel.petPanel.contentView === view)
+    }
+
     private func makeModel(provider: PanelTestProvider = PanelTestProvider(), selectModel: Bool = true) throws -> AppModel {
         let attachments = AttachmentStore(root: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString))
         let container = try ModelContainer(for: ChatRecord.self, MessageRecord.self,
